@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeDevCommand": "pnpm dev:vite",
+    "beforeBuildCommand": "pnpm build:vite"
   },
   "app": {
     "withGlobalTauri": true,
@@ -15,10 +15,10 @@
       {
         "label": "main",
         "title": "OpenSarthi",
-        "width": 420,
-        "height": 680,
-        "minWidth": 360,
-        "minHeight": 480,
+        "width": 1100,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 600,
         "resizable": true,
         "alwaysOnTop": false,
         "transparent": true,

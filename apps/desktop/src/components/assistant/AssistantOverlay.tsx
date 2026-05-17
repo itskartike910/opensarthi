@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Settings, Minimize2, WifiOff } from "lucide-react";
+import { Send, Settings, Minimize2, WifiOff, Activity } from "lucide-react";
 import { VoiceButton } from "./VoiceButton";
 import { Waveform } from "./Waveform";
 import { TranscriptView } from "./TranscriptView";
@@ -24,7 +24,6 @@ export function AssistantOverlay({ onOpenSettings }: AssistantOverlayProps) {
     setVoiceState,
   } = useAssistantStore();
 
-  // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentTranscript]);
@@ -51,130 +50,143 @@ export function AssistantOverlay({ onOpenSettings }: AssistantOverlayProps) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleTextSend(); }
   };
 
+  const getFormattedTime = () => {
+    return new Date().toLocaleTimeString('en-US', { hour12: false });
+  };
+
   return (
     <div
       style={{
         width: "100vw", height: "100vh",
         display: "flex", flexDirection: "column",
         background: "var(--bg-primary)",
-        overflow: "hidden",
+        padding: "12px",
+        gap: "12px",
       }}
     >
-      {/* ─── Title Bar (drag region) ─── */}
+      {/* ─── Top Drag Bar ─── */}
       <div
         data-tauri-drag-region
         style={{
-          padding: "12px 16px",
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-          cursor: "move",
+          flexShrink: 0, cursor: "move",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          {/* Status dot */}
-          <div style={{
-            width: "8px", height: "8px", borderRadius: "50%",
-            background: isConnected ? "var(--success)" : "var(--danger)",
-            boxShadow: isConnected ? "0 0 6px var(--success)" : "none",
-          }} />
-          <span style={{ fontSize: "13px", fontWeight: 600, letterSpacing: "-0.01em" }}>
-            OpenSarthi
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", color: "var(--accent)" }}>
+          <Activity size={16} className={isConnected ? "animate-glow" : ""} />
+          <span style={{ fontSize: "14px", fontWeight: "bold", letterSpacing: "0.1em" }}>
+            // OPENSARTHI -- {isConnected ? "ONLINE" : "OFFLINE"}
           </span>
-          {!isConnected && (
-            <span style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
-              <WifiOff size={11} /> Connecting…
-            </span>
-          )}
+          <span style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
+            {getFormattedTime()}
+          </span>
         </div>
-        <div style={{ display: "flex", gap: "4px" }}>
-          <button
-            id="minimize-btn"
-            onClick={() => setMinimized((m) => !m)}
-            style={{ padding: "4px", borderRadius: "var(--radius-sm)", color: "var(--text-muted)" }}
-            title={minimized ? "Expand" : "Minimize"}
-          >
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => setMinimized((m) => !m)} title="Minimize" style={{ padding: "4px 8px" }}>
             <Minimize2 size={14} />
           </button>
-          <button
-            id="settings-btn"
-            onClick={onOpenSettings}
-            style={{ padding: "4px", borderRadius: "var(--radius-sm)", color: "var(--text-muted)" }}
-            title="Settings"
-          >
+          <button onClick={onOpenSettings} title="Settings" style={{ padding: "4px 8px" }}>
             <Settings size={14} />
           </button>
         </div>
       </div>
 
-      {/* ─── Main Content ─── */}
+      {/* ─── Main Content HUD ─── */}
       <AnimatePresence>
         {!minimized && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1, flex: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            style={{ display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 }}
+            style={{ display: "flex", gap: "16px", overflow: "hidden", flex: 1 }}
           >
-            {/* Message area */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px", display: "flex", flexDirection: "column", gap: "8px" }}>
-              {messages.length === 0 && (
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", opacity: 0.4 }}>
-                  <p style={{ fontSize: "13px", color: "var(--text-muted)", textAlign: "center" }}>
-                    Say <em>"Hey Sarthi"</em> or type below
-                  </p>
+            {/* LEFT PANEL */}
+            <div style={{ width: "260px", display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div className="hud-panel" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                <div className="hud-panel-title">// TASKS - ACTIVE</div>
+                <div style={{ padding: "12px", overflowY: "auto", flex: 1 }}>
+                  <ActionLog plan={currentPlan} />
                 </div>
-              )}
-              <MessageList messages={messages} />
-              <TranscriptView transcript={currentTranscript} />
-              <ActionLog plan={currentPlan} />
-              <div ref={bottomRef} />
+              </div>
+              <div className="hud-panel" style={{ height: "160px" }}>
+                <div className="hud-panel-title">// FIXES - 00</div>
+                <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>
+                  01 System checks passing<br/>
+                  02 Dependencies validated
+                </div>
+              </div>
             </div>
 
-            {/* ─── Input Bar ─── */}
-            <div style={{
-              padding: "12px 14px",
-              borderTop: "1px solid var(--border)",
-              display: "flex", alignItems: "center", gap: "10px",
-              background: "var(--bg-secondary)", flexShrink: 0,
-            }}>
-              <VoiceButton voiceState={voiceState} onClick={handleVoiceClick} disabled={!isConnected} />
-              <Waveform voiceState={voiceState} />
-              <input
-                id="text-input"
-                value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={isConnected ? "Type a command…" : "Connecting to runtime…"}
-                disabled={!isConnected || voiceState === "listening"}
-                style={{
-                  flex: 1,
-                  background: "var(--bg-tertiary)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-md)",
-                  padding: "9px 12px",
-                  fontSize: "13px",
-                  color: "var(--text-primary)",
-                  outline: "none",
-                  fontFamily: "var(--font-sans)",
-                  transition: "border-color var(--transition-fast)",
-                }}
-                onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
-              />
-              <button
-                id="send-btn"
-                onClick={handleTextSend}
-                disabled={!textInput.trim() || !isConnected}
-                style={{
-                  width: "36px", height: "36px", borderRadius: "var(--radius-sm)",
-                  background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center",
-                  flexShrink: 0, transition: "opacity var(--transition-fast)",
-                }}
-                title="Send"
-              >
-                <Send size={15} style={{ color: "#fff" }} />
-              </button>
+            {/* CENTER PANEL */}
+            <div className="hud-panel" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <div style={{
+                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                opacity: 0.05, pointerEvents: "none", display: "flex", flexDirection: "column", alignItems: "center"
+              }}>
+                <Activity size={180} color="var(--accent)" />
+              </div>
+              
+              <div style={{ flex: 1, overflowY: "auto", padding: "16px", zIndex: 1 }}>
+                {messages.length === 0 && (
+                  <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.6 }}>
+                    <p style={{ color: "var(--text-secondary)", letterSpacing: "0.1em" }}>
+                      INITIALIZING OPENSARTHI PROTOCOL...
+                    </p>
+                  </div>
+                )}
+                <MessageList messages={messages} />
+                <div ref={bottomRef} />
+              </div>
+
+              {/* INPUT BAR */}
+              <div style={{
+                padding: "16px", borderTop: "1px solid var(--border)",
+                display: "flex", alignItems: "center", gap: "16px", background: "rgba(0,0,0,0.4)", zIndex: 1
+              }}>
+                <VoiceButton voiceState={voiceState} onClick={handleVoiceClick} disabled={!isConnected} />
+                <Waveform voiceState={voiceState} />
+                <input
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isConnected ? "ENTER COMMAND..." : "CONNECTING..."}
+                  disabled={!isConnected || voiceState === "listening"}
+                  style={{
+                    flex: 1, background: "transparent", border: "none", borderBottom: "1px solid var(--border-accent)",
+                    color: "var(--text-primary)", fontSize: "14px", fontFamily: "var(--font-mono)",
+                    padding: "8px 4px", outline: "none", textTransform: "uppercase"
+                  }}
+                />
+                <button
+                  onClick={handleTextSend}
+                  disabled={!textInput.trim() || !isConnected}
+                  style={{
+                    padding: "8px 16px", background: "var(--accent)", color: "#000", border: "none",
+                    fontWeight: "bold", opacity: (!textInput.trim() || !isConnected) ? 0.4 : 1
+                  }}
+                >
+                  <Send size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* RIGHT PANEL */}
+            <div style={{ width: "240px", display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div className="hud-panel" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                <div className="hud-panel-title">// LIVE ACTIVITY</div>
+                <div style={{ padding: "12px", overflowY: "auto", flex: 1 }}>
+                  <TranscriptView transcript={currentTranscript} />
+                </div>
+              </div>
+              <div className="hud-panel" style={{ padding: "12px" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "4px" }}>
+                  SYSTEM BUILD
+                </div>
+                <div style={{ color: "var(--accent)", fontWeight: "bold" }}>
+                  OPENSARTHI 1.0<br/>
+                  <span style={{ fontSize: "10px", color: "var(--text-primary)" }}>UID: DEV_01</span>
+                </div>
+              </div>
             </div>
           </motion.div>
         )}

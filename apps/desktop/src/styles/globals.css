@@ -1,56 +1,55 @@
 /* ============================================================
    OpenSarthi Global Design System
-   Dark-first, glassmorphism, purple-blue accent palette
+   Spider-Man / HUD inspired, Neon Red, Tech-forward UI
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
 
-/* --- CSS Custom Properties (Design Tokens) --- */
 :root {
   /* Backgrounds */
-  --bg-primary:     hsl(220, 22%, 7%);
-  --bg-secondary:   hsl(220, 20%, 11%);
-  --bg-tertiary:    hsl(220, 18%, 15%);
-  --bg-glass:       hsla(220, 22%, 13%, 0.72);
-  --bg-glass-hover: hsla(220, 22%, 18%, 0.80);
+  --bg-primary:     hsla(0, 100%, 2%, 0.85);
+  --bg-secondary:   hsla(0, 100%, 6%, 0.90);
+  --bg-tertiary:    hsla(0, 100%, 10%, 0.95);
+  --bg-glass:       hsla(0, 100%, 5%, 0.75);
+  --bg-glass-hover: hsla(0, 100%, 8%, 0.85);
 
   /* Text */
-  --text-primary:   hsl(0, 0%, 95%);
-  --text-secondary: hsl(220, 10%, 60%);
-  --text-muted:     hsl(220, 10%, 40%);
+  --text-primary:   #ffe6e6;
+  --text-secondary: #ff8080;
+  --text-muted:     #b30000;
 
-  /* Accent — Purple-blue */
-  --accent:         hsl(252, 80%, 65%);
-  --accent-dim:     hsl(252, 60%, 55%);
-  --accent-glow:    hsla(252, 80%, 65%, 0.25);
-  --accent-glow-lg: hsla(252, 80%, 65%, 0.12);
+  /* Accent — Neon Red */
+  --accent:         #ff1a1a;
+  --accent-dim:     #cc0000;
+  --accent-glow:    hsla(0, 100%, 50%, 0.4);
+  --accent-glow-lg: hsla(0, 100%, 50%, 0.15);
 
   /* Status */
-  --success:    hsl(152, 60%, 48%);
-  --warning:    hsl(38,  90%, 55%);
-  --danger:     hsl(0,   70%, 58%);
-  --info:       hsl(210, 80%, 60%);
+  --success:    #00e6e6;
+  --warning:    #ffaa00;
+  --danger:     #ff1a1a;
+  --info:       #00e6e6;
 
   /* Borders */
-  --border:         hsla(220, 15%, 30%, 0.45);
-  --border-accent:  hsla(252, 80%, 65%, 0.40);
+  --border:         hsla(0, 100%, 40%, 0.4);
+  --border-accent:  #ff1a1a;
 
   /* Shadows */
-  --shadow-sm:  0 1px 3px hsla(0, 0%, 0%, 0.4);
-  --shadow-md:  0 4px 16px hsla(0, 0%, 0%, 0.5);
-  --shadow-lg:  0 8px 32px hsla(0, 0%, 0%, 0.6);
-  --shadow-accent: 0 0 24px hsla(252, 80%, 65%, 0.3);
+  --shadow-sm:  0 1px 3px hsla(0, 0%, 0%, 0.8);
+  --shadow-md:  0 4px 16px hsla(0, 0%, 0%, 0.9);
+  --shadow-lg:  0 8px 32px hsla(0, 0%, 0%, 0.95);
+  --shadow-accent: 0 0 24px hsla(0, 100%, 50%, 0.4);
 
-  /* Radius */
-  --radius-sm:  6px;
-  --radius-md:  12px;
-  --radius-lg:  18px;
-  --radius-xl:  24px;
+  /* Radius - sharp edges for HUD */
+  --radius-sm:  0px;
+  --radius-md:  2px;
+  --radius-lg:  4px;
+  --radius-xl:  6px;
   --radius-full: 9999px;
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-sans: 'Share Tech Mono', monospace; /* Use mono everywhere */
 
   /* Transitions */
   --transition-fast:   150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -58,13 +57,7 @@
   --transition-slow:   400ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Blur */
-  --blur-glass: blur(16px) saturate(180%);
-
-  /* Z-index layers */
-  --z-base:    1;
-  --z-overlay: 10;
-  --z-modal:   100;
-  --z-toast:   1000;
+  --blur-glass: blur(16px) saturate(150%);
 }
 
 /* --- Reset & Base --- */
@@ -77,8 +70,6 @@
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  font-variation-settings: normal;
 }
 
 body {
@@ -88,11 +79,12 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden; /* Tauri window — no scrollbars on body */
+  overflow: hidden; 
   user-select: none;
+  text-transform: uppercase; /* HUD stylistic choice */
+  letter-spacing: 0.05em;
 }
 
-/* Allow text selection inside specific areas */
 .selectable { user-select: text; }
 
 #root {
@@ -107,73 +99,94 @@ body {
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: var(--radius-full);
+  background: var(--border-accent);
+  border-radius: 0;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
-/* --- Glass Card Utility --- */
-.glass {
+/* --- HUD Panel Utilities --- */
+.hud-panel {
   background: var(--bg-glass);
   backdrop-filter: var(--blur-glass);
   -webkit-backdrop-filter: var(--blur-glass);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  box-shadow: 0 0 10px hsla(0, 100%, 50%, 0.1) inset;
+  position: relative;
 }
 
-.glass:hover {
-  background: var(--bg-glass-hover);
-  border-color: hsla(220, 15%, 38%, 0.5);
+.hud-panel::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: -1px;
+  width: 8px; height: 8px;
+  border-top: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+}
+.hud-panel::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; right: -1px;
+  width: 8px; height: 8px;
+  border-bottom: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+}
+
+.hud-panel-title {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px;
+  text-shadow: 0 0 5px var(--accent-glow);
 }
 
 /* --- Button Reset --- */
 button {
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
   cursor: pointer;
-  border: none;
-  background: none;
-  color: inherit;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  transition: all var(--transition-fast);
 }
 
-button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  color: var(--accent);
+}
+
+button:disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--border); box-shadow: none; }
 
 /* --- Focus Visible --- */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 /* --- Animations --- */
 @keyframes pulse-ring {
   0%, 100% { transform: scale(1);    opacity: 0.6; }
-  50%       { transform: scale(1.08); opacity: 1;   }
+  50%       { transform: scale(1.1); opacity: 1;   }
 }
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 12px var(--accent-glow); }
-  50%       { box-shadow: 0 0 28px var(--accent-glow), 0 0 48px var(--accent-glow-lg); }
+  0%, 100% { box-shadow: 0 0 12px var(--accent-glow); border-color: var(--accent-dim); }
+  50%       { box-shadow: 0 0 28px var(--accent-glow), 0 0 48px var(--accent-glow-lg); border-color: var(--accent); }
 }
-
 @keyframes waveform-bar {
   0%, 100% { transform: scaleY(0.2); }
   50%       { transform: scaleY(1);   }
 }
-
 .animate-fade-in  { animation: fade-in  var(--transition-normal) both; }
 .animate-slide-up { animation: slide-up var(--transition-slow) both; }
-.animate-spin     { animation: spin 1s linear infinite; }
+.animate-glow     { animation: glow-pulse 2s infinite; }

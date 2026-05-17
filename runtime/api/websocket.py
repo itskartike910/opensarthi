@@ -44,12 +44,12 @@ class Session:
             await self.send_message("assistant_response", {
                 "id": str(uuid.uuid4()),
                 "role": "assistant",
-                "content": result.data,
+                "content": result.output,
                 "timestamp": int(asyncio.get_event_loop().time() * 1000)
             })
             
             # Trigger TTS for the response
-            # audio_path = await self.voice_pipeline.speak(result.data)
+            # audio_path = await self.voice_pipeline.speak(result.output)
             # await self.send_message("audio_state", {"playing": True, "path": audio_path})
             
         except Exception as e:

@@ -27,10 +27,13 @@ export function useWebSocket(port: number | null) {
 
     const unsubs = [
       wsClient.on("session_state", (msg) => {
-        const connected = !!(msg.payload as { connected?: boolean })?.connected;
-        setIsConnected(connected);
-        setConnected(connected);
-        if (connected) setVoiceState("idle");
+        const payload = msg.payload as { connected?: boolean; active?: boolean };
+        if (payload.connected !== undefined) {
+          const connected = !!payload.connected;
+          setIsConnected(connected);
+          setConnected(connected);
+          if (connected) setVoiceState("idle");
+        }
       }),
 
       wsClient.on("transcript_update", (msg) => {

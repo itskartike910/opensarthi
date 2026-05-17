@@ -23,13 +23,18 @@ class VoicePipeline:
         logger.info("Started listening")
         
         # Simulated continuous listening loop
+        phrases = [
+            "Initializing microphone...",
+            "Listening to user environment...",
+            "Processing voice signature...",
+            "Awaiting command input..."
+        ]
+        idx = 0
         try:
             while self.is_listening:
-                # 1. Read from audio stream (e.g. PyAudio or Unix socket from Rust)
-                # 2. VAD to detect speech
-                # 3. Yield transcript chunks
-                await asyncio.sleep(0.5)
-                # yield "partial transcript..."
+                await asyncio.sleep(1.5)
+                yield phrases[idx % len(phrases)]
+                idx += 1
         except asyncio.CancelledError:
             self.is_listening = False
             logger.info("Stopped listening")

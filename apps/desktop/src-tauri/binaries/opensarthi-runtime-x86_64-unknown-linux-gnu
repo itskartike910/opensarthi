@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Get the absolute path to this script's directory
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Path to the runtime directory in monorepo
+if [ -d "$DIR/../../../../../runtime" ]; then
+    RUNTIME_DIR="$DIR/../../../../../runtime"
+else
+    RUNTIME_DIR="$DIR/../../../../runtime"
+fi
+cd "$RUNTIME_DIR"
+source .venv/bin/activate
+exec python main.py

@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
-use tracing::{info, error};
+use tracing::{info};
 
 /// Shared application state
 pub struct AppState {
