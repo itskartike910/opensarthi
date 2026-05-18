@@ -50,9 +50,19 @@ agent = Agent(
         "1. When chatting directly to the user (conversational), respond normally with plain text.\n"
         "2. To TYPE into another application (like Slack, Chrome), you MUST use the `type_text` tool.\n"
         "3. To press keys like Enter, Return, Tab, etc., use the `press_key` tool.\n"
-        "4. When opening an app like 'slack' or 'google-chrome', use `run_shell_command` with an ampersand (e.g. 'slack &') so it doesn't block."
+        "4. When opening an app like 'slack' or 'google-chrome', use `run_shell_command` with an ampersand (e.g. 'slack &') so it doesn't block.\n"
+        "5. If a page or application is loading, use `wait_seconds` to pause execution, then use `take_screenshot` to check the progress. Repeat this in a loop if necessary until the loading completes."
     ),
 )
+
+@agent.tool
+async def wait_seconds(ctx: RunContext[AgentDependencies], seconds: int) -> str:
+    """Pauses execution for a specified number of seconds (useful when waiting for pages or apps to load)."""
+    import asyncio
+    if ctx.deps.log_action: await ctx.deps.log_action("wait_seconds", f"Waiting for {seconds} seconds...", "running")
+    await asyncio.sleep(seconds)
+    if ctx.deps.log_action: await ctx.deps.log_action("wait_seconds", f"Finished waiting.", "success")
+    return f"Waited for {seconds} seconds."
 
 @agent.tool
 async def take_screenshot(ctx: RunContext[AgentDependencies]) -> str:

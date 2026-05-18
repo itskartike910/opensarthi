@@ -104,9 +104,45 @@ export function useWebSocket(port: number | null) {
         const message = MessageSchema.parse(msg.payload);
         addMessage(message);
         setTranscript(null);
-        setVoiceState("idle");
+        
+        const isVoice = (msg.payload as any).is_voice;
+        
+        if (isVoice) {
+          // Await speech completion before listening again
+          setVoiceState("speaking");
+        } else {
+          setVoiceState("idle");
+        }
+        
         setPlan(null);
         setExecutingStep(null);
+      }),
+
+      wsClient.on("speech_started", () => {
+        setVoiceState("speaking");
+      }),
+
+      wsClient.on("speech_completed", () => {
+        const { continuousListening } = useAssistantStore.getState();
+        if (continuousListening) {
+          setVoiceState("listening");
+        } else {
+          setVoiceState("idle");
+        }
+      }),
+
+      wsClient.on("settings_sync", (msg) => {
+        const { local_model, cloud_model, gemini_api_key, voice_accent, voice_speed, continuous_listening, active_theme } = msg.payload as any;
+        
+        const store = useAssistantStore.getState();
+        if (local_model && cloud_model) store.setActiveModels(local_model, cloud_model);
+        if (gemini_api_key !== undefined) store.setCloudApiKey(gemini_api_key);
+        if (voice_accent !== undefined && voice_speed !== undefined && continuous_listening !== undefined) {
+          store.setVoiceSettings(voice_accent, voice_speed, continuous_listening);
+        }
+        if (active_theme) {
+          store.setActiveTheme(active_theme);
+        }
       }),
 
       wsClient.on("history_response", (msg) => {

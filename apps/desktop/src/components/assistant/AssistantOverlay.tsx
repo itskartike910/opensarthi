@@ -24,6 +24,64 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory }: AssistantOve
     setVoiceState, addMessage, clearMessages
   } = useAssistantStore();
 
+  // Leetcode-style Draggable Panel Resizing State
+  const [leftWidth, setLeftWidth] = useState(260); // Default Left panel width in px
+  const [rightWidth, setRightWidth] = useState(240); // Default Right panel width in px
+  
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDraggingLeft = useRef(false);
+  const isDraggingRight = useRef(false);
+
+  const resizeLeft = useCallback((e: MouseEvent) => {
+    if (!isDraggingLeft.current) return;
+    const newWidth = Math.max(180, Math.min(450, e.clientX - 12)); // bounds: min 180px, max 450px
+    setLeftWidth(newWidth);
+  }, []);
+
+  const stopResizeLeft = useCallback(() => {
+    isDraggingLeft.current = false;
+    document.removeEventListener("mousemove", resizeLeft);
+    document.removeEventListener("mouseup", stopResizeLeft);
+  }, [resizeLeft]);
+
+  const startResizeLeft = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingLeft.current = true;
+    document.addEventListener("mousemove", resizeLeft);
+    document.addEventListener("mouseup", stopResizeLeft);
+  }, [resizeLeft, stopResizeLeft]);
+
+  const resizeRight = useCallback((e: MouseEvent) => {
+    if (!isDraggingRight.current) return;
+    if (!containerRef.current) return;
+    const containerWidth = containerRef.current.clientWidth;
+    const newWidth = Math.max(160, Math.min(400, containerWidth - e.clientX - 12)); // bounds: min 160px, max 400px
+    setRightWidth(newWidth);
+  }, []);
+
+  const stopResizeRight = useCallback(() => {
+    isDraggingRight.current = false;
+    document.removeEventListener("mousemove", resizeRight);
+    document.removeEventListener("mouseup", stopResizeRight);
+  }, [resizeRight]);
+
+  const startResizeRight = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRight.current = true;
+    document.addEventListener("mousemove", resizeRight);
+    document.addEventListener("mouseup", stopResizeRight);
+  }, [resizeRight, stopResizeRight]);
+
+  // Clean up global listeners on unmount
+  useEffect(() => {
+    return () => {
+      document.removeEventListener("mousemove", resizeLeft);
+      document.removeEventListener("mouseup", stopResizeLeft);
+      document.removeEventListener("mousemove", resizeRight);
+      document.removeEventListener("mouseup", stopResizeRight);
+    };
+  }, [resizeLeft, stopResizeLeft, resizeRight, stopResizeRight]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentTranscript]);
@@ -109,12 +167,8 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory }: AssistantOve
             .replace(/[*#_\-]/g, "")
             .trim();
           
-          if (clean && typeof window !== "undefined" && window.speechSynthesis) {
-            window.speechSynthesis.cancel(); // kill active speaking
-            const utterance = new SpeechSynthesisUtterance(clean);
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            window.speechSynthesis.speak(utterance);
+          if (clean) {
+            wsClient.send("speak_text", { text: clean });
           }
           lastSentSourceRef.current = "text"; // reset expectation
         }
@@ -185,20 +239,21 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory }: AssistantOve
       {/* ─── Main Content HUD ─── */}
       <AnimatePresence>
         <motion.div
+          ref={containerRef}
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: "auto", opacity: 1, flex: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          style={{ display: "flex", gap: "16px", overflow: "hidden", flex: 1 }}
+          style={{ display: "flex", gap: "0px", overflow: "hidden", flex: 1, position: "relative" }}
         >
           {/* LEFT PANEL */}
-          <div style={{ flex: "0 0 25%", minWidth: "220px", maxWidth: "300px", display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ width: `${leftWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", gap: "16px" }}>
             <div className="hud-panel" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
               <div className="hud-panel-title">// TASKS - ACTIVE</div>
               <div style={{ padding: "12px", overflowY: "auto", flex: 1 }}>
                 <ActionLog plan={currentPlan} />
               </div>
             </div>
-            <div className="hud-panel" style={{ height: "160px", display: "flex", flexDirection: "column" }}>
+            <div className="hud-panel" style={{ height: "160px", display: "flex", flexDirection: "column", flexShrink: 0 }}>
               <div className="hud-panel-title">// AGENT STATUS & SYSTEMS</div>
               <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)", flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
                 <div>LOCAL LLM: <span style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>{activeLocalModel}</span></div>
@@ -211,8 +266,35 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory }: AssistantOve
             </div>
           </div>
 
+          {/* LEFT PANEL DRAG HANDLE */}
+          <div
+            onMouseDown={startResizeLeft}
+            style={{
+              width: "12px",
+              cursor: "col-resize",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 10,
+              position: "relative",
+              flexShrink: 0,
+            }}
+            className="panel-splitter"
+          >
+            <div
+              style={{
+                width: "2px",
+                height: "36px",
+                background: "var(--border)",
+                borderRadius: "1px",
+                transition: "all 0.2s",
+              }}
+              className="splitter-bar"
+            />
+          </div>
+
           {/* CENTER PANEL */}
-          <div className="hud-panel" style={{ flex: "1 1 auto", minWidth: "400px", display: "flex", flexDirection: "column" }}>
+          <div className="hud-panel" style={{ flex: "1 1 0%", minWidth: "320px", display: "flex", flexDirection: "column" }}>
             <div style={{
               position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
               opacity: 0.05, pointerEvents: "none", display: "flex", flexDirection: "column", alignItems: "center"
@@ -264,15 +346,42 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory }: AssistantOve
             </div>
           </div>
 
+          {/* RIGHT PANEL DRAG HANDLE */}
+          <div
+            onMouseDown={startResizeRight}
+            style={{
+              width: "12px",
+              cursor: "col-resize",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 10,
+              position: "relative",
+              flexShrink: 0,
+            }}
+            className="panel-splitter"
+          >
+            <div
+              style={{
+                width: "2px",
+                height: "36px",
+                background: "var(--border)",
+                borderRadius: "1px",
+                transition: "all 0.2s",
+              }}
+              className="splitter-bar"
+            />
+          </div>
+
           {/* RIGHT PANEL */}
-          <div style={{ flex: "0 0 20%", minWidth: "200px", maxWidth: "260px", display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ width: `${rightWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", gap: "16px" }}>
             <div className="hud-panel" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
               <div className="hud-panel-title">// LIVE ACTIVITY</div>
               <div style={{ padding: "12px", overflowY: "auto", flex: 1 }}>
                 <TranscriptView transcript={currentTranscript} />
               </div>
             </div>
-            <div className="hud-panel" style={{ padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div className="hud-panel" style={{ padding: "12px", display: "flex", flexDirection: "column", gap: "8px", flexShrink: 0 }}>
               <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
                 SYSTEM BUILD
               </div>

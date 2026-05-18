@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { AssistantOverlay } from "./components/assistant/AssistantOverlay";
 import { PermissionDialog } from "./components/permissions/PermissionDialog";
 import { SettingsView } from "./components/settings/SettingsView";
@@ -15,10 +15,30 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  // Settings State
-  const [localModel, setLocalModel] = useState("qwen2.5-coder:3b");
-  const [cloudModel, setCloudModel] = useState("gemini-2.5-flash");
-  const [geminiKey, setGeminiKey] = useState("");
+  const { 
+    activeLocalModel, 
+    activeCloudModel, 
+    cloudApiKey, 
+    voiceAccent, 
+    voiceSpeed, 
+    activeTheme,
+    setVoiceSettings,
+    setActiveTheme,
+    setActiveModels,
+    setCloudApiKey
+  } = useAssistantStore();
+
+  // Dynamic Theme application to document.body
+  useEffect(() => {
+    // Remove all previous theme classes
+    document.body.className = document.body.className
+      .split(" ")
+      .filter((c) => !c.startsWith("theme-"))
+      .join(" ");
+    
+    // Add the active theme class
+    document.body.classList.add(activeTheme);
+  }, [activeTheme]);
 
   // Listen for the runtime sidecar to announce its port
   useTauriEvent<number>(TAURI_EVENTS.RUNTIME_PORT_READY, useCallback((port) => {
@@ -28,15 +48,28 @@ export default function App() {
   // Connect WebSocket once port is known
   useWebSocket(runtimePort);
 
-  const handleSaveSettings = (newLocal: string, newCloud: string, newKey: string) => {
-    setLocalModel(newLocal);
-    setCloudModel(newCloud);
-    setGeminiKey(newKey);
-    useAssistantStore.getState().setActiveModels(newLocal, newCloud);
+  const handleSaveSettings = (
+    newLocal: string, 
+    newCloud: string, 
+    newKey: string,
+    newAccent: string,
+    newSpeed: number,
+    newContinuous: boolean,
+    newTheme: string
+  ) => {
+    setActiveModels(newLocal, newCloud);
+    setCloudApiKey(newKey);
+    setVoiceSettings(newAccent, newSpeed, newContinuous);
+    setActiveTheme(newTheme);
+    
     wsClient.send("update_settings", {
       local_model: newLocal,
       cloud_model: newCloud,
-      gemini_api_key: newKey
+      gemini_api_key: newKey,
+      voice_accent: newAccent,
+      voice_speed: newSpeed,
+      continuous_listening: newContinuous,
+      active_theme: newTheme
     });
   };
 
@@ -51,9 +84,12 @@ export default function App() {
         {showSettings && (
           <SettingsView
             onClose={() => setShowSettings(false)}
-            currentLocalModel={localModel}
-            currentCloudModel={cloudModel}
-            currentGeminiKey={geminiKey}
+            currentLocalModel={activeLocalModel}
+            currentCloudModel={activeCloudModel}
+            currentGeminiKey={cloudApiKey}
+            currentVoiceAccent={voiceAccent}
+            currentVoiceSpeed={voiceSpeed}
+            currentTheme={activeTheme}
             onSave={handleSaveSettings}
           />
         )}

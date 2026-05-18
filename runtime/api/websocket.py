@@ -44,6 +44,14 @@ class Session:
         }
         await self.ws.send_json(msg)
 
+    async def speak(self, text: str):
+        """Play speech and broadcast speech status events to the client."""
+        try:
+            await self.send_message("speech_started", {})
+            await self.voice_pipeline.speak(text)
+        finally:
+            await self.send_message("speech_completed", {})
+
     async def speak_and_send_audio(self, text: str):
         try:
             from gtts import gTTS
@@ -130,7 +138,8 @@ class Session:
                 "id": ast_msg_id,
                 "role": "assistant",
                 "content": result.output,
-                "timestamp": ast_timestamp
+                "timestamp": ast_timestamp,
+                "is_voice": source == "voice"
             })
             
             # Trigger TTS asynchronously from Python when source is voice
@@ -143,7 +152,7 @@ class Session:
                 clean_text = clean_text.strip()
                 
                 if clean_text:
-                    asyncio.create_task(self.voice_pipeline.speak(clean_text))
+                    asyncio.create_task(self.speak(clean_text))
             
         except Exception as e:
             logger.error("Agent execution failed", error=str(e))
@@ -176,7 +185,7 @@ class Session:
                 clean_text = clean_text.strip()
                 if clean_text:
                     logger.info("Replaying speech synthesis via WebSocket request", text=clean_text)
-                    asyncio.create_task(self.voice_pipeline.speak(clean_text))
+                    asyncio.create_task(self.speak(clean_text))
         elif msg_type == "load_thread":
             import db
             thread_id = payload.get("thread_id")
@@ -187,18 +196,31 @@ class Session:
             from config import settings, save_settings_to_env
             settings.local_model = payload.get("local_model", settings.local_model)
             settings.cloud_model = payload.get("cloud_model", settings.cloud_model)
-            settings.gemini_api_key = payload.get("gemini_api_key", settings.gemini_api_key)
-            save_settings_to_env(settings.local_model, settings.cloud_model, settings.gemini_api_key)
+            
+            # API Key Retention: Only update if a non-empty string is provided
+            new_api_key = payload.get("gemini_api_key")
+            if new_api_key and new_api_key.strip():
+                settings.gemini_api_key = new_api_key.strip()
+                
+            settings.voice_accent = payload.get("voice_accent", settings.voice_accent)
+            settings.voice_speed = float(payload.get("voice_speed", settings.voice_speed))
+            settings.continuous_listening = bool(payload.get("continuous_listening", settings.continuous_listening))
+            settings.active_theme = payload.get("active_theme", settings.active_theme)
+            
+            save_settings_to_env(
+                settings.local_model, 
+                settings.cloud_model, 
+                settings.gemini_api_key,
+                settings.voice_accent,
+                settings.voice_speed,
+                settings.continuous_listening,
+                settings.active_theme
+            )
             if settings.gemini_api_key:
                 import os
                 os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
-            logger.info("Settings updated and saved to .env", local_model=settings.local_model, cloud_model=settings.cloud_model)
-            await self.send_message("assistant_response", {
-                "id": str(uuid.uuid4()),
-                "role": "system",
-                "content": f"Settings saved! Local: {settings.local_model}, Cloud: {settings.cloud_model}",
-                "timestamp": int(asyncio.get_event_loop().time() * 1000)
-            })
+            # Simply save changes in the sidecar environment without pushing entries to the chat history overlay
+            pass
 
     async def _listen_loop(self):
         """Simulate sending transcript updates."""
@@ -214,6 +236,19 @@ class ConnectionManager:
         session = Session(websocket)
         self.sessions[websocket] = session
         logger.info("Client connected", session_id=session.session_id)
+        
+        # Send current settings on startup
+        from config import settings
+        await session.send_message("settings_sync", {
+            "local_model": settings.local_model,
+            "cloud_model": settings.cloud_model,
+            "gemini_api_key": settings.gemini_api_key or "",
+            "voice_accent": settings.voice_accent,
+            "voice_speed": settings.voice_speed,
+            "continuous_listening": settings.continuous_listening,
+            "active_theme": getattr(settings, "active_theme", "theme-red-black")
+        })
+        
         asyncio.create_task(session._listen_loop())
         return session
 

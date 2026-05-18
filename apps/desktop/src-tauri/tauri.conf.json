@@ -43,13 +43,21 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
+    "targets": ["appimage"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "../../../runtime/*.py",
+      "../../../runtime/requirements.txt",
+      "../../../runtime/api/**/*",
+      "../../../runtime/planner/**/*",
+      "../../../runtime/tools/**/*",
+      "../../../runtime/voice/**/*"
     ],
     "externalBin": ["binaries/opensarthi-runtime"]
   }

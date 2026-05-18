@@ -23,6 +23,12 @@ interface AssistantState {
 
   activeLocalModel: string;
   activeCloudModel: string;
+  cloudApiKey: string;
+  activeTheme: string;
+
+  voiceAccent: string;
+  voiceSpeed: number;
+  continuousListening: boolean;
 
   // Actions
   setVoiceState: (state: VoiceState) => void;
@@ -37,6 +43,9 @@ interface AssistantState {
   setExecutingStep: (index: number | null) => void;
   addOrUpdateToolAction: (tool: string, description: string, status: "pending" | "running" | "success" | "error" | "skipped", result?: any) => void;
   setActiveModels: (local: string, cloud: string) => void;
+  setCloudApiKey: (key: string) => void;
+  setActiveTheme: (theme: string) => void;
+  setVoiceSettings: (accent: string, speed: number, continuous: boolean) => void;
 }
 
 export const useAssistantStore = create<AssistantState>((set) => ({
@@ -49,6 +58,11 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   executingStepIndex: null,
   activeLocalModel: "qwen2.5-coder:3b",
   activeCloudModel: "gemini-2.5-flash",
+  cloudApiKey: "",
+  activeTheme: "theme-red-black",
+  voiceAccent: "ie",
+  voiceSpeed: 1.35,
+  continuousListening: false,
 
   setVoiceState: (voiceState) => set({ voiceState }),
   setConnected: (isConnected) => set({ isConnected }),
@@ -65,6 +79,9 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   setPlan: (currentPlan) => set({ currentPlan, executingStepIndex: null }),
 
   setActiveModels: (local, cloud) => set({ activeLocalModel: local, activeCloudModel: cloud }),
+  setCloudApiKey: (cloudApiKey) => set({ cloudApiKey }),
+  setActiveTheme: (activeTheme) => set({ activeTheme }),
+  setVoiceSettings: (voiceAccent, voiceSpeed, continuousListening) => set({ voiceAccent, voiceSpeed, continuousListening }),
 
   updateStepStatus: (index, update) =>
     set((s) => {

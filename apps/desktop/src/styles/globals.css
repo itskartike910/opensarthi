@@ -6,58 +6,137 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
 
 :root {
-  /* Backgrounds */
+  /* Default Theme (Dark Crimson) variables */
   --bg-primary:     hsla(0, 100%, 2%, 0.85);
   --bg-secondary:   hsla(0, 100%, 6%, 0.90);
   --bg-tertiary:    hsla(0, 100%, 10%, 0.95);
   --bg-glass:       hsla(0, 100%, 5%, 0.75);
   --bg-glass-hover: hsla(0, 100%, 8%, 0.85);
-
-  /* Text */
   --text-primary:   #ffe6e6;
   --text-secondary: #ff8080;
   --text-muted:     #b30000;
-
-  /* Accent — Neon Red */
   --accent:         #ff1a1a;
   --accent-dim:     #cc0000;
   --accent-glow:    hsla(0, 100%, 50%, 0.4);
   --accent-glow-lg: hsla(0, 100%, 50%, 0.15);
-
-  /* Status */
-  --success:    #00e6e6;
-  --warning:    #ffaa00;
-  --danger:     #ff1a1a;
-  --info:       #00e6e6;
-
-  /* Borders */
   --border:         hsla(0, 100%, 40%, 0.4);
   --border-accent:  #ff1a1a;
+  --shadow-accent:  0 0 24px hsla(0, 100%, 50%, 0.4);
 
-  /* Shadows */
-  --shadow-sm:  0 1px 3px hsla(0, 0%, 0%, 0.8);
-  --shadow-md:  0 4px 16px hsla(0, 0%, 0%, 0.9);
-  --shadow-lg:  0 8px 32px hsla(0, 0%, 0%, 0.95);
-  --shadow-accent: 0 0 24px hsla(0, 100%, 50%, 0.4);
-
-  /* Radius - sharp edges for HUD */
+  /* Shared Radii, Fonts, Transitions */
   --radius-sm:  0px;
   --radius-md:  2px;
   --radius-lg:  4px;
   --radius-xl:  6px;
   --radius-full: 9999px;
-
-  /* Typography */
   --font-mono: 'Share Tech Mono', monospace;
-  --font-sans: 'Share Tech Mono', monospace; /* Use mono everywhere */
-
-  /* Transitions */
+  --font-sans: 'Share Tech Mono', monospace;
   --transition-fast:   150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow:   400ms cubic-bezier(0.4, 0, 0.2, 1);
-
-  /* Blur */
   --blur-glass: blur(16px) saturate(150%);
+  --success:    #00e6e6;
+  --warning:    #ffaa00;
+  --danger:     #ff1a1a;
+  --info:       #00e6e6;
+  --shadow-sm:  0 1px 3px hsla(0, 0%, 0%, 0.8);
+  --shadow-md:  0 4px 16px hsla(0, 0%, 0%, 0.9);
+  --shadow-lg:  0 8px 32px hsla(0, 0%, 0%, 0.95);
+}
+
+/* ============================================================
+   PREMIUM THEMES OVERRIDES
+   ============================================================ */
+
+/* Theme 1: Dark Crimson (Default Red/Black) */
+body.theme-red-black {
+  /* Keep default variables */
+}
+
+/* Theme 2: Dark Forest (Green/Black) */
+body.theme-green-black {
+  --bg-primary:     hsla(120, 100%, 2%, 0.85);
+  --bg-secondary:   hsla(120, 100%, 5%, 0.90);
+  --bg-tertiary:    hsla(120, 100%, 8%, 0.95);
+  --bg-glass:       hsla(120, 100%, 4%, 0.75);
+  --bg-glass-hover: hsla(120, 100%, 6%, 0.85);
+  --text-primary:   #e6ffe6;
+  --text-secondary: #80ff80;
+  --text-muted:     #00b300;
+  --accent:         #1aff1a;
+  --accent-dim:     #00cc00;
+  --accent-glow:    hsla(120, 100%, 50%, 0.4);
+  --accent-glow-lg: hsla(120, 100%, 50%, 0.15);
+  --border:         hsla(120, 100%, 40%, 0.4);
+  --border-accent:  #1aff1a;
+  --shadow-accent:  0 0 24px hsla(120, 100%, 50%, 0.4);
+  --danger:         #ff4d4d;
+}
+
+/* Theme 3: Dark Nebula (Purple/Black) */
+body.theme-purple-black {
+  --bg-primary:     hsla(280, 100%, 2%, 0.85);
+  --bg-secondary:   hsla(280, 100%, 5%, 0.90);
+  --bg-tertiary:    hsla(280, 100%, 8%, 0.95);
+  --bg-glass:       hsla(280, 100%, 4%, 0.75);
+  --bg-glass-hover: hsla(280, 100%, 6%, 0.85);
+  --text-primary:   #f9e6ff;
+  --text-secondary: #d980ff;
+  --text-muted:     #9900b3;
+  --accent:         #bf1aff;
+  --accent-dim:     #9900cc;
+  --accent-glow:    hsla(280, 100%, 50%, 0.4);
+  --accent-glow-lg: hsla(280, 100%, 50%, 0.15);
+  --border:         hsla(280, 100%, 40%, 0.4);
+  --border-accent:  #bf1aff;
+  --shadow-accent:  0 0 24px hsla(280, 100%, 50%, 0.4);
+  --danger:         #ff4d4d;
+}
+
+/* Theme 4: Light Sakura (Cherry Pink / Clean White) */
+body.theme-light-sakura {
+  --bg-primary:     #fff5f7;
+  --bg-secondary:   #ffe0e6;
+  --bg-tertiary:    #ffd1dc;
+  --bg-glass:       rgba(255, 245, 247, 0.75);
+  --bg-glass-hover: rgba(255, 224, 230, 0.85);
+  --text-primary:   #4a1521;
+  --text-secondary: #9c2743;
+  --text-muted:     #e05275;
+  --accent:         #ff4081;
+  --accent-dim:     #f50057;
+  --accent-glow:    rgba(255, 64, 129, 0.2);
+  --accent-glow-lg: rgba(255, 64, 129, 0.08);
+  --border:         rgba(255, 64, 129, 0.25);
+  --border-accent:  #ff4081;
+  --shadow-accent:  0 0 24px rgba(255, 64, 129, 0.15);
+  --shadow-sm:  0 1px 3px rgba(74, 21, 33, 0.1);
+  --shadow-md:  0 4px 16px rgba(74, 21, 33, 0.15);
+  --shadow-lg:  0 8px 32px rgba(74, 21, 33, 0.2);
+  --danger:         #d50000;
+}
+
+/* Theme 5: Light Slate (Clean Sky Blue / Slate Gray) */
+body.theme-light-slate {
+  --bg-primary:     #f8fafc;
+  --bg-secondary:   #f1f5f9;
+  --bg-tertiary:    #e2e8f0;
+  --bg-glass:       rgba(248, 250, 252, 0.75);
+  --bg-glass-hover: rgba(241, 245, 249, 0.85);
+  --text-primary:   #0f172a;
+  --text-secondary: #334155;
+  --text-muted:     #64748b;
+  --accent:         #0284c7;
+  --accent-dim:     #0369a1;
+  --accent-glow:    rgba(2, 132, 199, 0.2);
+  --accent-glow-lg: rgba(2, 132, 199, 0.08);
+  --border:         rgba(2, 132, 199, 0.25);
+  --border-accent:  #0284c7;
+  --shadow-accent:  0 0 24px rgba(2, 132, 199, 0.15);
+  --shadow-sm:  0 1px 3px rgba(15, 23, 42, 0.08);
+  --shadow-md:  0 4px 16px rgba(15, 23, 42, 0.12);
+  --shadow-lg:  0 8px 32px rgba(15, 23, 42, 0.18);
+  --danger:         #dc2626;
 }
 
 /* --- Reset & Base --- */
@@ -190,3 +269,22 @@ button:disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--border)
 .animate-fade-in  { animation: fade-in  var(--transition-normal) both; }
 .animate-slide-up { animation: slide-up var(--transition-slow) both; }
 .animate-glow     { animation: glow-pulse 2s infinite; }
+
+/* ============================================================
+   Leetcode-style Draggable Pane Splitter Customizations
+   ============================================================ */
+.panel-splitter {
+  transition: background var(--transition-fast), border var(--transition-fast);
+  border-left: 1px solid transparent;
+  border-right: 1px solid transparent;
+}
+.panel-splitter:hover {
+  background: hsla(var(--accent-glow), 0.06) !important;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.panel-splitter:hover .splitter-bar {
+  background: var(--accent) !important;
+  box-shadow: 0 0 10px var(--accent), 0 0 20px var(--accent);
+  height: 60px !important;
+}
