@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2 } from "lucide-react";
 import type { VoiceState } from "../../lib/schemas";
 
 interface VoiceButtonProps {
@@ -31,8 +31,8 @@ const STATE_CONFIG: Record<
     pulse: false,
   },
   speaking: {
-    icon: <Mic size={22} />,
-    label: "Speaking…",
+    icon: <Volume2 size={22} />,
+    label: "Stop speaking",
     color: "var(--success)",
     pulse: true,
   },

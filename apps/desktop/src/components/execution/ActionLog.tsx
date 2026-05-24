@@ -1,102 +1,171 @@
-import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, XCircle, Loader2, Circle, ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
-import type { Plan, PlanStep } from "../../lib/schemas";
-
-const STEP_ICON: Record<PlanStep["status"], React.ReactNode> = {
-  pending:  <Circle size={14} style={{ color: "var(--text-muted)" }} />,
-  running:  <Loader2 size={14} className="animate-spin" style={{ color: "var(--accent)" }} />,
-  success:  <CheckCircle2 size={14} style={{ color: "var(--success)" }} />,
-  error:    <XCircle size={14} style={{ color: "var(--danger)" }} />,
-  skipped:  <Circle size={14} style={{ color: "var(--text-muted)", opacity: 0.4 }} />,
-};
-
-function StepRow({ step }: { step: PlanStep }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasDetails = !!(step.error || step.result !== undefined);
-
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, x: -8 }}
-      animate={{ opacity: 1, x: 0 }}
-      style={{
-        padding: "8px 10px",
-        borderRadius: "var(--radius-sm)",
-        background: step.status === "running" ? "var(--accent-glow)" : "transparent",
-        border: `1px solid ${step.status === "running" ? "var(--border-accent)" : "transparent"}`,
-        cursor: hasDetails ? "pointer" : "default",
-        transition: "background var(--transition-fast)",
-      }}
-      onClick={() => hasDetails && setExpanded((e) => !e)}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        {STEP_ICON[step.status]}
-        <span style={{ fontSize: "12px", flex: 1, color: "var(--text-secondary)" }}>
-          <span style={{ color: "var(--text-muted)", marginRight: "4px" }}>{step.tool}</span>
-          {step.description}
-        </span>
-        {hasDetails && (
-          expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />
-        )}
-      </div>
-      <AnimatePresence>
-        {expanded && hasDetails && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            style={{
-              marginTop: "6px",
-              padding: "6px 8px",
-              background: "var(--bg-primary)",
-              borderRadius: "var(--radius-sm)",
-              fontSize: "11px",
-              fontFamily: "var(--font-mono)",
-              color: step.error ? "var(--danger)" : "var(--text-secondary)",
-              overflow: "hidden",
-              wordBreak: "break-all",
-            }}
-          >
-            {step.error ?? JSON.stringify(step.result, null, 2)}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
+import { motion } from "framer-motion";
+import type { Plan, Message } from "../../lib/schemas";
 
 interface ActionLogProps {
   plan: Plan | null;
+  selectedTaskId: string | null;
+  messages: Message[];
 }
 
-export function ActionLog({ plan }: ActionLogProps) {
-  if (!plan) return null;
+export function ActionLog({ plan, selectedTaskId, messages }: ActionLogProps) {
+  const hasActivePlan = !!plan;
+
+  // Derive agentic tasks to locate the selected task's tool actions
+  const agenticTasks: any[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+
+    const nextAssistant = messages.slice(i + 1).find(m => m.role === "assistant");
+    if (!nextAssistant) {
+      if (hasActivePlan && i === messages.length - 1) {
+        agenticTasks.push({
+          id: msg.id,
+          status: "running",
+          toolActions: plan ? plan.steps.map(s => ({
+            tool: s.tool,
+            description: s.description || s.tool,
+            status: s.status || "pending",
+            result: s.result,
+            timestamp: s.timestamp,
+          })) : []
+        });
+      }
+      continue;
+    }
+
+    const isTask = nextAssistant.content.includes("✓ ") ||
+                   nextAssistant.content.includes("Task completed successfully") ||
+                   nextAssistant.content.includes("❌ Failed at step");
+    if (!isTask) continue;
+
+    const toolActions: any[] = [];
+    const lines = nextAssistant.content.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("✓ ")) {
+        toolActions.push({ tool: "step", description: trimmed.slice(2), status: "success", timestamp: nextAssistant.timestamp });
+      } else if (trimmed.startsWith("❌")) {
+        toolActions.push({ tool: "step", description: trimmed, status: "error", timestamp: nextAssistant.timestamp });
+      }
+    }
+
+    agenticTasks.push({
+      id: msg.id,
+      status: nextAssistant.content.includes("❌") ? "error" : "success",
+      toolActions,
+    });
+  }
+
+  // Get actions to display
+  let actions: any[] = [];
+  const selectedTask = agenticTasks.find(t => t.id === selectedTaskId);
+  
+  if (selectedTask) {
+    if (selectedTask.status === "running" && plan) {
+      actions = plan.steps.map(s => ({
+        tool: s.tool,
+        description: s.description || s.tool,
+        status: s.status || "pending",
+        result: s.result,
+        timestamp: s.timestamp,
+      }));
+    } else {
+      actions = selectedTask.toolActions || [];
+    }
+  } else if (plan) {
+    // If no task is selected, but a plan is currently running, show it
+    actions = plan.steps.map(s => ({
+      tool: s.tool,
+      description: s.description || s.tool,
+      status: s.status || "pending",
+      result: s.result,
+      timestamp: s.timestamp,
+    }));
+  }
+
+  // Sort: newest at top (reverse order of execution/indices)
+  const reversedActions = [...actions].reverse();
+
+  if (reversedActions.length === 0) {
+    return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.5, minHeight: "120px" }}>
+        <p style={{ color: "var(--text-secondary)", fontSize: "11px", letterSpacing: "0.05em", textAlign: "center" }}>
+          // NO ACTIVE ACTIVITY LOGS
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: "auto" }}
-      exit={{ opacity: 0, height: 0 }}
-      style={{
-        background: "var(--bg-secondary)",
-        borderRadius: "var(--radius-md)",
-        border: "1px solid var(--border)",
-        padding: "10px",
-        overflow: "hidden",
-      }}
-    >
-      <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-        Execution Plan
-      </p>
-      <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "8px" }}>
-        {plan.goal}
-      </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-        {plan.steps.map((step) => (
-          <StepRow key={step.index} step={step} />
-        ))}
-      </div>
-    </motion.div>
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: "100%" }}>
+      {reversedActions.map((action, idx) => {
+        const isRunning = action.status === "running";
+        const isSuccess = action.status === "success";
+        const isError = action.status === "error" || action.status === "failed";
+        
+        let statusColor = "var(--text-muted)";
+        let statusText = "QUEUED";
+        let cardBg = "rgba(0, 0, 0, 0.25)";
+        let cardBorder = "1px solid var(--border)";
+        let glow = "none";
+        
+        if (isRunning) {
+          statusColor = "var(--accent)";
+          statusText = "RUNNING";
+          cardBg = "rgba(255, 0, 0, 0.15)";
+          cardBorder = "1px solid var(--accent)";
+          glow = "0 0 10px var(--accent-glow)";
+        } else if (isSuccess) {
+          statusColor = "var(--success)";
+          statusText = "SUCCESS";
+          cardBg = "rgba(0, 230, 180, 0.04)";
+          cardBorder = "1px solid rgba(0, 230, 180, 0.15)";
+        } else if (isError) {
+          statusColor = "var(--danger)";
+          statusText = "FAILED";
+          cardBg = "rgba(255, 60, 60, 0.04)";
+          cardBorder = "1px solid rgba(255, 60, 60, 0.15)";
+        }
+
+        return (
+          <motion.div
+            key={idx}
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              padding: "10px 12px",
+              borderRadius: "var(--radius-md)",
+              background: cardBg,
+              border: cardBorder,
+              boxShadow: glow,
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+              transition: "all 0.15s ease-in-out",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: "10px", fontWeight: "bold", fontFamily: "var(--font-mono)", color: "var(--accent)", textTransform: "uppercase" }}>
+                {action.tool}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ fontSize: "9px", color: statusColor, fontWeight: "bold", letterSpacing: "0.05em" }}>
+                  {statusText}
+                </span>
+                {action.timestamp && (
+                  <span style={{ fontSize: "9px", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                    [{new Date(action.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}]
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: "1.4", fontFamily: "var(--font-mono)" }}>
+              {action.description}
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
   );
 }

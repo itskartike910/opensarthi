@@ -1,6 +1,10 @@
 import os
 import asyncio
-from typing import Protocol
+import subprocess
+import shutil
+from typing import Protocol, Optional
+from tools.base import BaseTool, RiskLevel
+from planner.schemas import ToolResult, ToolResultConfidence
 
 class DesktopProvider(Protocol):
     async def capture_screen(self) -> str: ...
@@ -10,7 +14,7 @@ class DesktopProvider(Protocol):
 
 class XdotoolProvider:
     async def capture_screen(self) -> str:
-        # Placeholder for actual implementation using mss or similar
+        # Placeholder/implementation
         return "/tmp/opensarthi_screen.png"
 
     async def type_text(self, text: str) -> bool:
@@ -64,26 +68,210 @@ class YdotoolProvider:
         return proc.returncode == 0
 
     async def click(self, x: int, y: int, button: str = "left") -> bool:
-        # ydotool click logic
         return True
 
-class DesktopTools:
-    def __init__(self):
-        # Auto-detect Wayland vs X11
-        wayland_display = os.environ.get("WAYLAND_DISPLAY")
-        if wayland_display:
-            self.provider: DesktopProvider = YdotoolProvider()
+# Helper to check display environment and select provider
+def get_desktop_provider() -> DesktopProvider:
+    wayland_display = os.environ.get("WAYLAND_DISPLAY")
+    if wayland_display:
+        return YdotoolProvider()
+    else:
+        return XdotoolProvider()
+
+_provider = get_desktop_provider()
+
+class ClickTool(BaseTool):
+    name = "click"
+    description = "Click at (x, y) coordinates. Args: x (number), y (number), button (string, optional: 'left', 'right', 'middle', default 'left')"
+    risk_level = RiskLevel.MODERATE
+
+    async def execute(self, args: dict) -> ToolResult:
+        x = args.get("x")
+        y = args.get("y")
+        button = args.get("button", "left")
+
+        if x is None or y is None:
+            return ToolResult.fail("Missing x or y coordinate", retryable=False)
+
+        try:
+            success = await _provider.click(int(x), int(y), button)
+            if not success:
+                return ToolResult.fail("Provider click failed", retryable=True)
+
+            return ToolResult.ok(
+                observation=f"Clicked at ({x}, {y}) with {button} button",
+                confidence=ToolResultConfidence.MEDIUM,
+                suggested_next="Observe the desktop to verify the click had the intended effect"
+            )
+        except Exception as e:
+            return ToolResult.fail(str(e), retryable=True)
+
+
+class TypeTextTool(BaseTool):
+    name = "type_text"
+    description = "Type text into the currently focused window/input. Args: text (string)"
+    risk_level = RiskLevel.MODERATE
+
+    async def execute(self, args: dict) -> ToolResult:
+        text = args.get("text", "")
+        if not text:
+            return ToolResult.fail("No text provided", retryable=False)
+
+        try:
+            success = await _provider.type_text(text)
+            if not success:
+                return ToolResult.fail("Provider typing failed", retryable=True)
+
+            return ToolResult.ok(
+                observation=f"Typed: '{text[:50]}{'...' if len(text) > 50 else ''}'",
+                confidence=ToolResultConfidence.HIGH
+            )
+        except Exception as e:
+            return ToolResult.fail(str(e))
+
+
+class PressKeyTool(BaseTool):
+    name = "press_key"
+    description = "Presses a specific keyboard key (e.g., 'Return', 'Enter', 'Tab', 'Escape'). Args: key (string)"
+    risk_level = RiskLevel.MODERATE
+
+    async def execute(self, args: dict) -> ToolResult:
+        key = args.get("key", "")
+        if not key:
+            return ToolResult.fail("No key provided", retryable=False)
+
+        try:
+            success = await _provider.press_key(key)
+            if not success:
+                return ToolResult.fail("Provider press_key failed", retryable=True)
+
+            return ToolResult.ok(
+                observation=f"Pressed key: '{key}'",
+                confidence=ToolResultConfidence.HIGH
+            )
+        except Exception as e:
+            return ToolResult.fail(str(e))
+
+
+class OpenAppTool(BaseTool):
+    name = "open_app"
+    description = "Open an application by name (e.g. 'firefox', 'konsole', 'dolphin'). Args: app (string)"
+    risk_level = RiskLevel.MODERATE
+
+    async def execute(self, args: dict) -> ToolResult:
+        app = args.get("app", "").strip()
+        if not app:
+            return ToolResult.fail("No app name provided", retryable=False)
+
+        # Common app name aliases — LLMs often use display names, not binary names
+        ALIASES = {
+            "google-chrome": ["google-chrome-stable", "google-chrome", "chromium", "chromium-browser"],
+            "chrome": ["google-chrome-stable", "google-chrome", "chromium"],
+            "chromium": ["chromium", "chromium-browser", "google-chrome-stable"],
+            "firefox": ["firefox", "firefox-esr", "firefox-beta"],
+            "vscode": ["code", "code-oss", "codium"],
+            "vs code": ["code", "code-oss"],
+            "visual studio code": ["code", "code-oss"],
+            "terminal": ["konsole", "gnome-terminal", "xterm", "alacritty", "kitty"],
+            "file manager": ["dolphin", "nautilus", "thunar"],
+            "dolphin": ["dolphin"],
+            "konsole": ["konsole"],
+            "kate": ["kate"],
+            "vlc": ["vlc"],
+            "spotify": ["spotify"],
+            "discord": ["discord"],
+            "telegram": ["telegram-desktop", "telegram"],
+            "slack": ["slack"],
+            "zoom": ["zoom"],
+            "libreoffice": ["libreoffice", "soffice"],
+            "gimp": ["gimp"],
+            "inkscape": ["inkscape"],
+            "obs": ["obs", "obs-studio"],
+            "steam": ["steam"],
+            "garuda-update": ["garuda-update"],
+            "garuda": ["garuda-welcome"],
+        }
+
+        app_lower = app.lower().strip()
+        candidates = ALIASES.get(app_lower, [app])
+        # Also always try the original app name first
+        if app not in candidates:
+            candidates = [app] + candidates
+
+        tried = []
+        for binary in candidates:
+            if shutil.which(binary):
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        binary,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    # Don't wait — app launches in background
+                    return ToolResult.ok(
+                        observation=f"Launched '{binary}'",
+                        confidence=ToolResultConfidence.MEDIUM,
+                        suggested_next=f"Use wait_for_window to confirm it opened"
+                    )
+                except FileNotFoundError:
+                    tried.append(binary)
+                    continue
+                except Exception as e:
+                    return ToolResult.fail(str(e))
+            tried.append(binary)
+
+        return ToolResult.fail(
+            f"App '{app}' not found. Tried: {tried}. Check if it's installed.",
+            retryable=False
+        )
+
+
+class ClickElementTool(BaseTool):
+    name = "click_element"
+    description = (
+        "Click a UI element by its role and name using AT-SPI. "
+        "More reliable than coordinate clicking. "
+        "Args: role (string), name (string)"
+    )
+    risk_level = RiskLevel.MODERATE
+
+    async def execute(self, args: dict) -> ToolResult:
+        from providers.linux.accessibility import AccessibilityProvider
+        role = args.get("role", "")
+        name = args.get("name", "")
+
+        if not role and not name:
+            return ToolResult.fail("Provide at least one of: role, name", retryable=False)
+
+        provider = AccessibilityProvider()
+        if not provider.available:
+            return ToolResult.fail(
+                "AT-SPI not available — use coordinate click instead",
+                retryable=False
+            )
+
+        elements = provider.find_elements(
+            role=role or None,
+            name=name or None,
+            name_contains=name or None,
+            max_results=5
+        )
+
+        if not elements:
+            return ToolResult.fail(
+                f"No element found: role={role!r} name={name!r}",
+                retryable=True,
+                suggested_next="Try a coordinate click or check element names with observe_desktop"
+            )
+
+        target = elements[0]
+        success = provider.click_element(target)
+
+        if success:
+            return ToolResult.ok(
+                observation=f"Clicked [{target.role}] '{target.name}' at {target.center}",
+                confidence=ToolResultConfidence.HIGH,
+                ui_changed=True
+            )
         else:
-            self.provider: DesktopProvider = XdotoolProvider()
-
-    async def capture_screen(self) -> str:
-        return await self.provider.capture_screen()
-
-    async def type_text(self, text: str) -> bool:
-        return await self.provider.type_text(text)
-
-    async def press_key(self, key: str) -> bool:
-        return await self.provider.press_key(key)
-
-    async def click(self, x: int, y: int, button: str = "left") -> bool:
-        return await self.provider.click(x, y, button)
+            return ToolResult.fail("xdotool click failed", retryable=True)

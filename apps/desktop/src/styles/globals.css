@@ -139,6 +139,51 @@ body.theme-light-slate {
   --danger:         #dc2626;
 }
 
+/* Theme 6: Dark Ocean (Deep Blue / Neon Cyan) */
+body.theme-blue-black {
+  --bg-primary:     hsla(220, 80%, 3%, 0.92);
+  --bg-secondary:   hsla(220, 80%, 6%, 0.92);
+  --bg-tertiary:    hsla(220, 80%, 10%, 0.95);
+  --bg-glass:       hsla(210, 80%, 5%, 0.78);
+  --bg-glass-hover: hsla(210, 80%, 8%, 0.88);
+  --text-primary:   #e0f0ff;
+  --text-secondary: #60c0ff;
+  --text-muted:     #0060a0;
+  --accent:         #00b4ff;
+  --accent-dim:     #0090cc;
+  --accent-glow:    hsla(200, 100%, 55%, 0.35);
+  --accent-glow-lg: hsla(200, 100%, 55%, 0.12);
+  --border:         hsla(200, 100%, 50%, 0.3);
+  --border-accent:  #00b4ff;
+  --shadow-accent:  0 0 24px hsla(200, 100%, 55%, 0.35);
+  --danger:         #ff4d6a;
+  --success:        #00e6b4;
+}
+
+/* Theme 7: Light Clean (Pure White / Charcoal) */
+body.theme-light-clean {
+  --bg-primary:     #f9fafb;
+  --bg-secondary:   #f0f0f0;
+  --bg-tertiary:    #e2e2e2;
+  --bg-glass:       rgba(255, 255, 255, 0.88);
+  --bg-glass-hover: rgba(240, 240, 240, 0.95);
+  --text-primary:   #111111;
+  --text-secondary: #444444;
+  --text-muted:     #888888;
+  --accent:         #1a1a1a;
+  --accent-dim:     #333333;
+  --accent-glow:    rgba(0, 0, 0, 0.08);
+  --accent-glow-lg: rgba(0, 0, 0, 0.04);
+  --border:         rgba(0, 0, 0, 0.15);
+  --border-accent:  #222222;
+  --shadow-accent:  0 0 24px rgba(0, 0, 0, 0.08);
+  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md:  0 4px 16px rgba(0, 0, 0, 0.10);
+  --shadow-lg:  0 8px 32px rgba(0, 0, 0, 0.14);
+  --danger:         #cc0000;
+  --success:        #007744;
+}
+
 /* --- Reset & Base --- */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -164,7 +209,14 @@ body {
   letter-spacing: 0.05em;
 }
 
-.selectable { user-select: text; }
+.selectable { 
+  user-select: text; 
+  text-transform: none;
+}
+
+input, textarea {
+  text-transform: none;
+}
 
 #root {
   width: 100vw;

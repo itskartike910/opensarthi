@@ -1,81 +1,189 @@
-# OpenSarthi Desktop Shell
+# OpenSarthi — Desktop Frontend
 
-This is the native frontend shell for the OpenSarthi AI agent, built using **Tauri v2**, **React 19**, and **TypeScript**.
-
----
-
-## 🎨 UI, Themes, & Resizable Layouts
-
-The interface is designed to be a lightweight, borderless, floating overlay that stays out of your way until needed, providing maximum layout flexibility:
-
-* **Leetcode-Style Mouse Drag Resizing**: Built a pure React mouse drag-and-resize engine coordinating Left, Middle, and Right grid panels:
-  - Drag handlers update pane layouts dynamically inside [AssistantOverlay.tsx](./src/components/assistant/AssistantOverlay.tsx).
-  - Explicit size constraints protect visual structure (Left Panel: `180px - 450px`, Right Panel: `160px - 400px`).
-* **Interactive Glowing Splitters**: Leverages `.panel-splitter` divider elements in `globals.css` that light up in beautiful, fluid glass glows matching the active theme's accent color on hover and drag actions.
-* **5 Curated Premium Themes**:
-  - `Glass Red-Black` (Default High-Tech)
-  - `Forest Green-Black` (Cyberpunk Green)
-  - `Deep Purple-Black` (Midnight Tech)
-  - `Cyber Sky-White` (Modern Minimalist Light)
-  - `Sakura Pink-White` (Warm Soft Light)
-* **Fluid Micro-Animations**: Utilizing `framer-motion` to coordinate real-time audio waveforms, pulsing recording rings, expanded settings, and sliding shell logs.
-* **Zustand State Engine**: Fully manages Voice States, Chat Logs, Active Presets, Shell execution intercept lists, and resizer state cache.
+The Tauri v2 + React 19 desktop shell for OpenSarthi. Provides the UI, theming, voice controls, settings management, and real-time WebSocket connection to the Python AI runtime.
 
 ---
 
-## 🔌 Core Integrations
+## 🖥️ Tech Stack
 
-Because this is a Tauri application, the React frontend has native capabilities that a standard web app does not:
-* **System Tray**: A native OS tray icon allows you to show/hide the assistant globally.
-* **Sidecar Management**: The Rust core is configured to automatically spawn and manage the lifecycle of the Python AI runtime (`opensarthi-runtime`).
-* **IPC (Inter-Process Communication)**: Custom Rust-to-Frontend events are used for port negotiation, screenshot captures, and global hotkey triggers.
+| Layer | Technology |
+|-------|-----------|
+| **Desktop Framework** | Tauri v2 |
+| **UI Framework** | React 19 + TypeScript |
+| **Bundler** | Vite 6 |
+| **Styling** | Vanilla CSS with custom design tokens |
+| **State Management** | Zustand |
+| **WebSocket** | Native browser WebSocket with reconnect logic |
+| **Icons** | Lucide React |
 
 ---
 
-## 📦 Production Packaging & Build
+## 🎨 UI Design
 
-To compile a final optimized production Linux AppImage, execute the specialized build command:
+### Cyberpunk HUD Layout
 
-```bash
-PATH="/mnt/kartik/ai_desktop_agent_assistant/opensarthi/apps/desktop/src-tauri/mock_pkg_config:$PATH" \
-NO_STRIP=true \
-APPIMAGE_EXTRACT_AND_RUN=1 \
-pnpm run build
+The main window uses a three-panel grid layout:
+
+```
+┌────────────────┬──────────────────────────┬────────────────┐
+│  ACTIVE TASKS  │    CHAT / MAIN VIEW      │  LIVE PLAN &   │
+│                │                          │    ACTIVITY    │
+│  (scrollable)  │  messages + voice input  │  (scrollable)  │
+├────────────────┴──────────────────────────┴────────────────┤
+│  AGENT STATUS & SYSTEMS │ SYSTEM BUILD / VERSION INFO      │
+│  Provider, Model, Tokens│ Online status, time              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### Build Details
-- Runs typechecks on all TypeScript/React components.
-- Builds static UI files via Vite.
-- Bypasses WebKit2GTK symbol strip limitations on standard Linux environments by setting `NO_STRIP=true` and custom mocking path hooks.
-- Compiles Rust native hooks.
-- Spits out a single standalone bundle under:
-  `src-tauri/target/release/bundle/appimage/OpenSarthi_0.1.0_amd64.AppImage`
+### 5 Premium Themes
+
+| Theme | Style |
+|-------|-------|
+| **Glass Red-Black** | Default — high-tech cyberpunk red |
+| **Forest Green-Black** | Cyberpunk green terminal |
+| **Deep Purple-Black** | Midnight tech purple |
+| **Cyber Sky-White** | Modern minimalist light |
+| **Sakura Pink-White** | Warm soft light |
 
 ---
 
-## 🛠️ Development
+## ✅ Completed Features
 
-To start the UI in development mode:
+### AssistantOverlay (`components/assistant/AssistantOverlay.tsx`)
+
+The main UI component. Key capabilities:
+
+- **Real-time token counter** — `TOKEN USAGE` (current request) and `SESSION TOTAL` (cumulative), displayed in the bottom-left HUD panel. Resets on New Chat.
+- **Provider & model display** — shows the active provider and selected cloud/local model
+- **New Chat** — clears conversation history (calls `new_chat` WebSocket event), resets token counter
+- **Chat history** — renders assistant markdown responses and user messages
+- **Voice input** — animated microphone button with waveform pulse and state transitions (idle → listening → processing)
+
+### Settings (`components/settings/SettingsView.tsx`)
+
+Cascading three-step settings flow:
+
+```
+1. Select AI Provider   →   2. Select / Enter Model   →   3. API Key   →   Save
+```
+
+Supported providers and their model lists:
+
+| Provider | Example Models |
+|----------|---------------|
+| Groq | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| Google | `gemini-2.5-flash`, `gemini-2.0-flash` |
+| OpenAI | `gpt-4o`, `gpt-4o-mini` |
+| Anthropic | `claude-opus-4-5`, `claude-sonnet-4-5` |
+| OpenRouter | Custom text input |
+| Ollama | Custom text input (local) |
+
+- Saving with an empty key retains the previously saved key (no accidental wipe)
+- Keys stored individually per provider in `~/.config/opensarthi/.env`
+
+### WebSocket Hook (`hooks/useWebSocket.ts`)
+
+- Auto-connects to the Python runtime on the dynamically negotiated port
+- Handles `assistant_response`, `error`, `plan_step`, `task_update` message types
+- Extracts `usage.request_tokens`, `usage.response_tokens`, `usage.total_tokens` from each response
+- Auto-reconnects with exponential backoff on disconnect
+
+---
+
+## 📂 Directory Structure
+
+```
+apps/desktop/
+├── src/
+│   ├── main.tsx                     # Vite entry point
+│   ├── App.tsx                      # Root component, router, theme provider
+│   ├── components/
+│   │   ├── assistant/
+│   │   │   ├── AssistantOverlay.tsx # Main HUD (3-panel layout + token display)
+│   │   │   └── TaskList.tsx         # Active task list (left panel)
+│   │   ├── execution/               # Plan step viewer (right panel)
+│   │   ├── permissions/             # Permission confirmation dialogs
+│   │   └── settings/
+│   │       └── SettingsView.tsx     # Provider → Model → Key settings UI
+│   ├── hooks/
+│   │   └── useWebSocket.ts          # WebSocket connection + message handler
+│   ├── stores/                      # Zustand state (assistant, audio, execution)
+│   └── styles/                      # Global CSS, theme tokens, animations
+│
+├── src-tauri/
+│   ├── src/
+│   │   ├── lib.rs                   # App bootstrap, sidecar launch
+│   │   ├── sidecar.rs               # Python process spawn + port read
+│   │   ├── tray.rs                  # System tray icon and menu
+│   │   └── ipc.rs                   # Tauri IPC command handlers
+│   ├── binaries/
+│   │   └── opensarthi-runtime-x86_64-unknown-linux-gnu   # Bash bootstrap script
+│   ├── resources/
+│   │   └── uv                       # Bundled uv binary (57MB, portable Python)
+│   ├── mock_pkg_config/
+│   │   └── pkgconf                  # gdk-pixbuf path override for AppImage builds
+│   ├── capabilities/                # Tauri v2 permission scoping
+│   └── tauri.conf.json              # Window config, resource bundling, AppImage target
+│
+├── package.json
+├── vite.config.ts
+└── tsconfig.json
+```
+
+---
+
+## 🔧 Rust Core (`src-tauri/src/`)
+
+| File | Responsibility |
+|------|---------------|
+| `lib.rs` | App entry — sets up window, tray, spawns sidecar |
+| `sidecar.rs` | Spawns the bootstrap script, reads `PORT:xxxx` from stdout, forwards to frontend |
+| `tray.rs` | System tray icon, right-click menu (Show/Hide/Quit) |
+| `ipc.rs` | Tauri `invoke` command handlers (port forwarding, etc.) |
+
+---
+
+## 🏗️ Building
+
+### Development
 
 ```bash
-# Ensure you are in the apps/desktop directory or running from the monorepo root via pnpm
-pnpm install
+# From the repo root
 pnpm dev
 ```
 
-*Note: The frontend will attempt to connect to the Python runtime via WebSocket. Ensure the backend is running and has printed its dynamically assigned port to the console so the Tauri sidecar listener can pick it up.*
+This starts Vite HMR, compiles the Rust debug binary, spawns the Python sidecar, and opens the window.
+
+### Production AppImage
+
+```bash
+# From the repo root
+PATH="$(pwd)/apps/desktop/src-tauri/mock_pkg_config:$PATH" \
+NO_STRIP=true \
+APPIMAGE_EXTRACT_AND_RUN=1 \
+pnpm tauri build -b appimage
+```
+
+> **Why mock_pkg_config?**  
+> The `linuxdeploy-plugin-gtk.sh` uses `pkg-config --variable=gdk_pixbuf_binarydir` to locate GTK loader directories. On Arch/Garuda Linux this returns a path that doesn't exist in the expected linuxdeploy format. The `mock_pkg_config/pkgconf` wrapper intercepts these specific queries, creates the expected directories in `/tmp/mock_usr/`, and passes all other queries through to the real `pkgconf`.
+
+> **Why APPIMAGE_EXTRACT_AND_RUN?**  
+> The `linuxdeploy` AppImage itself requires FUSE to mount. This flag tells it to extract and run instead, bypassing the FUSE requirement (which may not be available in build environments).
 
 ---
 
-## 🔒 Tauri v2 Permissions Configuration
+## 🎨 Theme System
 
-We use Tauri v2's strict capability system. The permissions are explicitly mapped out in `src-tauri/capabilities/main.json`. 
-The frontend is only allowed to perform specific OS functions (like reading clipboard, firing notifications, and reading the screen buffer), ensuring a secure boundary between the UI and the host system.
+Themes are CSS custom property sets applied to `:root`. Each theme defines:
 
----
-
-## 🔮 What's Left (Roadmap)
-
-- [ ] **Saved Panel Width Cache**: Persist customized draggable panel width preferences inside LocalStorage to load layouts on app relaunch.
-- [ ] **Tray Icon Theme Sync**: Match the color of the native Linux top tray icon with the selected active color scheme dynamically.
-- [ ] **Overlay Drag & Drop**: Enable drag-and-dropping files directly into the conversation panel for quick multi-modal AI analysis.
+```css
+--primary-color        /* main accent (e.g. #ff1744 for red) */
+--primary-glow         /* rgba glow version */
+--bg-primary           /* main background */
+--bg-secondary         /* panel backgrounds */
+--bg-tertiary          /* elevated surfaces */
+--text-primary         /* main text */
+--text-secondary       /* muted/secondary text */
+--border-color         /* panel borders */
+--font-mono            /* monospace font for HUD labels */
+```

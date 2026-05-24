@@ -26,6 +26,12 @@ export const WSMessageTypeSchema = z.enum([
   "speech_started",
   "speech_completed",
   "settings_sync",
+  "voice_state",
+  "stop_speech",
+  "input_request",
+  "input_response",
+  "delete_thread",
+  "delete_all_threads",
 ]);
 export type WSMessageType = z.infer<typeof WSMessageTypeSchema>;
 
@@ -47,6 +53,7 @@ export const PlanStepSchema = z.object({
   status: z.enum(["pending", "running", "success", "error", "skipped"]),
   error: z.string().optional(),
   result: z.unknown().optional(),
+  timestamp: z.number().optional(),
 });
 export type PlanStep = z.infer<typeof PlanStepSchema>;
 

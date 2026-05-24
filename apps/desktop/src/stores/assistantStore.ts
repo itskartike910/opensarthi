@@ -40,9 +40,12 @@ interface AssistantState {
   openrouterApiKey: string;
   activeTheme: string;
 
-  voiceAccent: string;
+   voiceAccent: string;
   voiceSpeed: number;
   continuousListening: boolean;
+  wakeWords: string[];
+  wakeWordEnabled: boolean;
+  wakeWordThreshold: number;
 
   // Token tracking
   tokenUsage: TokenUsage;
@@ -65,6 +68,7 @@ interface AssistantState {
   setAllApiKeys: (keys: { gemini: string; openai: string; anthropic: string; groq: string; openrouter: string }) => void;
   setActiveTheme: (theme: string) => void;
   setVoiceSettings: (accent: string, speed: number, continuous: boolean) => void;
+  setWakeWordSettings: (enabled: boolean, threshold: number, phrases: string[]) => void;
   updateTokenUsage: (usage: { request_tokens: number; response_tokens: number; total_tokens: number }) => void;
   resetSessionTokens: () => void;
 }
@@ -90,6 +94,9 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   voiceAccent: "ie",
   voiceSpeed: 1.35,
   continuousListening: false,
+  wakeWords: ["hey sarthi", "hello sarthi"],
+  wakeWordEnabled: true,
+  wakeWordThreshold: 0.5,
   tokenUsage: {
     requestTokens: 0,
     responseTokens: 0,
@@ -123,6 +130,7 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   }),
   setActiveTheme: (activeTheme) => set({ activeTheme }),
   setVoiceSettings: (voiceAccent, voiceSpeed, continuousListening) => set({ voiceAccent, voiceSpeed, continuousListening }),
+  setWakeWordSettings: (wakeWordEnabled, wakeWordThreshold, wakeWords) => set({ wakeWordEnabled, wakeWordThreshold, wakeWords }),
 
   updateTokenUsage: (usage) => set((s) => ({
     tokenUsage: {
@@ -164,7 +172,7 @@ export const useAssistantStore = create<AssistantState>((set) => ({
     const existingIndex = steps.findIndex(st => st.tool === tool && st.description === description && st.status === "running");
     
     if (existingIndex >= 0) {
-      steps[existingIndex] = { ...steps[existingIndex], status, result };
+      steps[existingIndex] = { ...steps[existingIndex], status, result, timestamp: Date.now() };
     } else {
       steps.push({
         index: steps.length,
@@ -172,7 +180,8 @@ export const useAssistantStore = create<AssistantState>((set) => ({
         args: {},
         description,
         status,
-        result
+        result,
+        timestamp: Date.now()
       });
     }
 

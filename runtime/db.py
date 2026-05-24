@@ -82,4 +82,20 @@ def get_all_threads():
     conn.close()
     return [{"id": r[0], "created_at": r[1], "first_message": r[2]} for r in rows]
 
+def delete_thread(thread_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM messages WHERE thread_id = ?', (thread_id,))
+    cursor.execute('DELETE FROM threads WHERE id = ?', (thread_id,))
+    conn.commit()
+    conn.close()
+
+def delete_all_threads():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM messages')
+    cursor.execute('DELETE FROM threads')
+    conn.commit()
+    conn.close()
+
 init_db()

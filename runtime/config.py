@@ -16,6 +16,8 @@ env_file_path = str(USER_CONFIG_ENV) if USER_CONFIG_ENV.exists() else (LOCAL_DEV
 class Settings(BaseSettings):
     app_name: str = "OpenSarthi"
     wake_words: list[str] = ["hey sarthi", "hello sarthi"]
+    wake_word_enabled: bool = True
+    wake_word_threshold: float = 0.5
     local_model: str = "qwen2.5-coder:3b"
     cloud_model: str = "gemini-2.5-flash"
     
@@ -50,8 +52,12 @@ def save_settings_to_env(
     voice_accent: str,
     voice_speed: float,
     continuous_listening: bool,
-    active_theme: str
+    active_theme: str,
+    wake_words: list[str],
+    wake_word_enabled: bool,
+    wake_word_threshold: float
 ):
+    import json
     # Always write to the writable user's home configuration directory (safe for read-only AppImage filesystems!)
     with open(USER_CONFIG_ENV, "w") as f:
         f.write(f"LOCAL_MODEL={local_model}\n")
@@ -71,6 +77,9 @@ def save_settings_to_env(
         f.write(f"VOICE_SPEED={voice_speed}\n")
         f.write(f"CONTINUOUS_LISTENING={'True' if continuous_listening else 'False'}\n")
         f.write(f"ACTIVE_THEME={active_theme}\n")
+        f.write(f"WAKE_WORDS={json.dumps(wake_words)}\n")
+        f.write(f"WAKE_WORD_ENABLED={'True' if wake_word_enabled else 'False'}\n")
+        f.write(f"WAKE_WORD_THRESHOLD={wake_word_threshold}\n")
 
 def get_active_api_key() -> str | None:
     """Returns the API key for the currently active provider."""

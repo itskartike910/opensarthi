@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { AssistantOverlay } from "./components/assistant/AssistantOverlay";
 import { PermissionDialog } from "./components/permissions/PermissionDialog";
+import { InputDialog } from "./components/permissions/InputDialog";
 import { SettingsView } from "./components/settings/SettingsView";
 import { HistoryView } from "./components/settings/HistoryView";
 import { useTauriEvent } from "./hooks/useTauriEvent";
@@ -27,7 +28,11 @@ export default function App() {
     voiceAccent, 
     voiceSpeed, 
     activeTheme,
+    wakeWords,
+    wakeWordEnabled,
+    wakeWordThreshold,
     setVoiceSettings,
+    setWakeWordSettings,
     setActiveTheme,
     setActiveModels,
     setActiveProvider,
@@ -65,6 +70,9 @@ export default function App() {
     voiceSpeed: number;
     continuousListening: boolean;
     theme: string;
+    wakeWords: string[];
+    wakeWordEnabled: boolean;
+    wakeWordThreshold: number;
   }) => {
     setActiveModels(settings.localModel, settings.cloudModel);
     setActiveProvider(settings.provider);
@@ -76,6 +84,7 @@ export default function App() {
       openrouter: settings.openrouterKey,
     });
     setVoiceSettings(settings.voiceAccent, settings.voiceSpeed, settings.continuousListening);
+    setWakeWordSettings(settings.wakeWordEnabled, settings.wakeWordThreshold, settings.wakeWords);
     setActiveTheme(settings.theme);
 
     wsClient.send("update_settings", {
@@ -91,6 +100,9 @@ export default function App() {
       voice_speed: settings.voiceSpeed,
       continuous_listening: settings.continuousListening,
       active_theme: settings.theme,
+      wake_words: settings.wakeWords,
+      wake_word_enabled: settings.wakeWordEnabled,
+      wake_word_threshold: settings.wakeWordThreshold,
     });
   };
 
@@ -102,6 +114,7 @@ export default function App() {
         onNewChat={() => resetSessionTokens()}
       />
       <PermissionDialog />
+      <InputDialog />
       <AnimatePresence>
         {showSettings && (
           <SettingsView
@@ -117,6 +130,9 @@ export default function App() {
             currentVoiceAccent={voiceAccent}
             currentVoiceSpeed={voiceSpeed}
             currentTheme={activeTheme}
+            currentWakeWords={wakeWords}
+            currentWakeWordEnabled={wakeWordEnabled}
+            currentWakeWordThreshold={wakeWordThreshold}
             onSave={handleSaveSettings}
           />
         )}

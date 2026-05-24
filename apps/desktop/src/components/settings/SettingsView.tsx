@@ -25,10 +25,12 @@ const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
   groq: [
     { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (Versatile)" },
     { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B (Instant)" },
-    { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B 32K" },
-    { value: "gemma2-9b-it", label: "Gemma2 9B" },
-    { value: "deepseek-r1-distill-llama-70b", label: "DeepSeek R1 Distill 70B" },
-    { value: "qwen-qwq-32b", label: "Qwen QwQ 32B" },
+    { value: "groq/compound", label: "Groq Compound" },
+    { value: "groq/compound-mini", label: "Groq Compound Mini" },
+    { value: "meta-llama/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout 17B" },
+    { value: "qwen/qwen3-32b", label: "Qwen3 32B" },
+    { value: "openai/gpt-oss-120b", label: "GPT OSS 120B" },
+    { value: "openai/gpt-oss-20b", label: "GPT OSS 20B" },
   ],
   openrouter: [
     { value: "openai/gpt-4o", label: "OpenAI GPT-4o (via OR)" },
@@ -65,6 +67,9 @@ interface SettingsViewProps {
   currentVoiceAccent: string;
   currentVoiceSpeed: number;
   currentTheme: string;
+  currentWakeWords: string[];
+  currentWakeWordEnabled: boolean;
+  currentWakeWordThreshold: number;
   onSave: (settings: {
     localModel: string;
     cloudModel: string;
@@ -78,6 +83,9 @@ interface SettingsViewProps {
     voiceSpeed: number;
     continuousListening: boolean;
     theme: string;
+    wakeWords: string[];
+    wakeWordEnabled: boolean;
+    wakeWordThreshold: number;
   }) => void;
 }
 
@@ -151,6 +159,9 @@ export function SettingsView({
   currentVoiceAccent,
   currentVoiceSpeed,
   currentTheme,
+  currentWakeWords,
+  currentWakeWordEnabled,
+  currentWakeWordThreshold,
   onSave,
 }: SettingsViewProps) {
   const [provider, setProvider] = useState(currentProvider || "google");
@@ -167,6 +178,9 @@ export function SettingsView({
   const [voiceAccent, setVoiceAccent] = useState(currentVoiceAccent);
   const [voiceSpeed, setVoiceSpeed] = useState(currentVoiceSpeed);
   const [theme, setTheme] = useState(currentTheme);
+  const [wakeWordsInput, setWakeWordsInput] = useState((currentWakeWords || []).join(", "));
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(currentWakeWordEnabled !== undefined ? currentWakeWordEnabled : true);
+  const [wakeWordThreshold, setWakeWordThreshold] = useState(currentWakeWordThreshold !== undefined ? currentWakeWordThreshold : 0.5);
   const [saved, setSaved] = useState(false);
 
   const providerInfo = PROVIDER_LABELS[provider] || PROVIDER_LABELS.google;
@@ -216,19 +230,29 @@ export function SettingsView({
   const hasSavedKey = !!getCurrentKeyForProvider();
 
   const handleSaveAI = () => {
+    const parsedWakeWords = wakeWordsInput
+      .split(",")
+      .map((w) => w.trim())
+      .filter(Boolean);
+
+    // Only send the key that's being actively edited — don't overwrite other saved keys with empty strings
+    const currentKey = getCurrentKeyInput();
     onSave({
       localModel,
       cloudModel,
       provider,
-      geminiKey,
-      openaiKey,
-      anthropicKey,
-      groqKey,
-      openrouterKey,
+      geminiKey:     provider === "google"      ? (currentKey || currentGeminiKey)      : currentGeminiKey,
+      openaiKey:     provider === "openai"      ? (currentKey || currentOpenaiKey)      : currentOpenaiKey,
+      anthropicKey:  provider === "anthropic"   ? (currentKey || currentAnthropicKey)  : currentAnthropicKey,
+      groqKey:       provider === "groq"        ? (currentKey || currentGroqKey)        : currentGroqKey,
+      openrouterKey: provider === "openrouter"  ? (currentKey || currentOpenrouterKey) : currentOpenrouterKey,
       voiceAccent,
       voiceSpeed,
       continuousListening: true,
       theme,
+      wakeWords: parsedWakeWords,
+      wakeWordEnabled,
+      wakeWordThreshold,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -428,9 +452,10 @@ export function SettingsView({
                 <option value="theme-red-black">🔴 Dark Crimson (HUD Default)</option>
                 <option value="theme-green-black">🟢 Dark Forest (Matrix Green)</option>
                 <option value="theme-purple-black">🟣 Dark Nebula (Cyberpunk Purple)</option>
-                <option value="theme-blue-black">🔵 Dark Ocean (Deep Blue)</option>
+                <option value="theme-blue-black">🌊 Dark Ocean (Neon Cyan)</option>
                 <option value="theme-light-sakura">🌸 Light Sakura (Pink &amp; White)</option>
                 <option value="theme-light-slate">🏙️ Light Slate (Sky Blue &amp; Gray)</option>
+                <option value="theme-light-clean">⬜ Light Clean (Pure White)</option>
               </select>
             </div>
           </div>
@@ -475,6 +500,55 @@ export function SettingsView({
                   {voiceSpeed.toFixed(2)}x
                 </span>
               </div>
+            </div>
+
+            {/* Wake Word Detection Options */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "8px", paddingTop: "12px", borderTop: "1px dashed rgba(255,255,255,0.07)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <label style={{ ...labelStyle, marginBottom: 0, cursor: "pointer" }} htmlFor="wake-word-enabled">
+                  ENABLE WAKE WORD DETECTION
+                </label>
+                <input
+                  id="wake-word-enabled"
+                  type="checkbox"
+                  checked={wakeWordEnabled}
+                  onChange={(e) => setWakeWordEnabled(e.target.checked)}
+                  style={{ width: "16px", height: "16px", accentColor: "var(--accent)", cursor: "pointer" }}
+                />
+              </div>
+
+              {wakeWordEnabled && (
+                <>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                    <label style={labelStyle}>CUSTOM WAKE WORDS (COMMA SEPARATED)</label>
+                    <input
+                      value={wakeWordsInput}
+                      onChange={(e) => setWakeWordsInput(e.target.value)}
+                      placeholder="e.g. hey sarthi, hello sarthi, hi computer"
+                      style={inputStyle}
+                    />
+                    <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                      Add multiple phrases separated by commas.
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                    <label style={labelStyle}>DETECTION THRESHOLD / SENSITIVITY ({wakeWordThreshold.toFixed(2)})</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <input
+                        type="range"
+                        min="0.1" max="0.9" step="0.05"
+                        value={wakeWordThreshold}
+                        onChange={(e) => setWakeWordThreshold(parseFloat(e.target.value))}
+                        style={{ flex: 1, accentColor: "var(--accent)", cursor: "pointer" }}
+                      />
+                      <span style={{ fontSize: "13px", fontFamily: "var(--font-mono)", color: "var(--accent)", minWidth: "42px", textAlign: "right" }}>
+                        {wakeWordThreshold.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

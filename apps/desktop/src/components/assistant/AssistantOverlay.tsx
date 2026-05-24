@@ -27,6 +27,12 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
     setVoiceState, addMessage, clearMessages
   } = useAssistantStore();
 
+  // Ref map: message id → DOM element for scroll-to
+  const messageRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const taskRefsMap = useRef<Record<string, HTMLDivElement | null>>({});
+
   // Leetcode-style Draggable Panel Resizing State
   const [leftWidth, setLeftWidth] = useState(260); // Default Left panel width in px
   const [rightWidth, setRightWidth] = useState(240); // Default Right panel width in px
@@ -97,8 +103,14 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
       // Clean slate on toggle
       setTextInput("");
       useAssistantStore.getState().setTranscript("");
+      wsClient.send("voice_state", { state: "listening" });
     } else if (voiceState === "listening") {
       setVoiceState("idle");
+      wsClient.send("voice_state", { state: "idle" });
+    } else if (voiceState === "speaking") {
+      wsClient.send("stop_speech", {});
+      const { continuousListening } = useAssistantStore.getState();
+      setVoiceState(continuousListening ? "listening" : "idle");
     }
   }, [voiceState, setVoiceState]);
 
@@ -163,11 +175,27 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
           lastSentSourceRef.current === "voice" &&
           lastMsg.content
         ) {
-          // Strip markdown elements, code blocks, bullet formatting, for crystal clear voice reading
-          const clean = String(lastMsg.content)
-            .replace(/```[\s\S]*?```/g, "")
+          let textToSpeak = String(lastMsg.content);
+          
+          // Strip <think>...</think> block completely
+          textToSpeak = textToSpeak.replace(/<think>[\s\S]*?<\/think>/g, "");
+          
+          // If there's an unclosed <think>, the model is still thinking — wait
+          if (textToSpeak.includes("<think>")) {
+            return;
+          }
+
+          // Strip markdown code blocks (including JSON plans)
+          let clean = textToSpeak.replace(/```[\s\S]*?```/g, "");
+          
+          // Strip raw JSON array blocks (in case LLM output JSON without backticks)
+          clean = clean.replace(/\[\s*\{[\s\S]*\}\s*\]/g, "");
+          
+          // Strip inline code, markdown formatting
+          clean = clean
             .replace(/`([^`]+)`/g, "$1")
             .replace(/[*#_\-]/g, "")
+            .replace(/^\s*[✓✗❌⚠️]+\s*/gm, "")  // Strip status emojis/bullets
             .trim();
           
           if (clean) {
@@ -252,9 +280,25 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
           {/* LEFT PANEL */}
           <div style={{ width: `${leftWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", gap: "16px" }}>
             <div className="hud-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div className="hud-panel-title">// ACTIVE TASKS</div>
-              <div style={{ padding: "12px", overflowY: "auto", flex: 1 }}>
-                <TaskList messages={messages} voiceState={voiceState} hasActivePlan={!!currentPlan} />
+              <div className="hud-panel-title">// AGENT RUNS</div>
+              <div style={{ padding: "10px", overflowY: "auto", flex: 1, display: "flex", flexDirection: "column" }}>
+                <TaskList
+                  messages={messages}
+                  voiceState={voiceState}
+                  hasActivePlan={!!currentPlan}
+                  currentPlan={currentPlan}
+                  selectedTaskId={selectedTaskId}
+                  setSelectedTaskId={setSelectedTaskId}
+                  taskRefsMap={taskRefsMap}
+                  onScrollToMessage={(msgId) => {
+                    const el = messageRefsMap.current[msgId];
+                    if (el) {
+                      el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      el.style.outline = "1px solid var(--accent)";
+                      setTimeout(() => { el.style.outline = "none"; }, 1500);
+                    }
+                  }}
+                />
               </div>
             </div>
             <div className="hud-panel" style={{ height: "220px", display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -317,7 +361,7 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
               <Activity size={180} color="var(--accent)" />
             </div>
             
-            <div style={{ flex: 1, overflowY: "auto", padding: "16px", zIndex: 1 }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px", zIndex: 1 }} ref={chatScrollRef}>
               {messages.length === 0 && (
                 <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.6 }}>
                   <p style={{ color: "var(--text-secondary)", letterSpacing: "0.1em", whiteSpace: "pre-line", textAlign: "center" }}>
@@ -325,7 +369,38 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
                   </p>
                 </div>
               )}
-              <MessageList messages={messages} />
+              <MessageList
+                messages={messages}
+                messageRefsMap={messageRefsMap}
+                onSelectMessage={(msgId) => {
+                  const idx = messages.findIndex(m => m.id === msgId);
+                  if (idx === -1) return;
+                  
+                  let userMsgId = "";
+                  if (messages[idx].role === "user") {
+                    userMsgId = messages[idx].id;
+                  } else {
+                    for (let j = idx; j >= 0; j--) {
+                      if (messages[j].role === "user") {
+                        userMsgId = messages[j].id;
+                        break;
+                      }
+                    }
+                  }
+
+                  if (userMsgId) {
+                    setSelectedTaskId(userMsgId);
+                    const taskEl = taskRefsMap.current[userMsgId];
+                    if (taskEl) {
+                      taskEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                      taskEl.style.outline = "1px solid var(--accent)";
+                      setTimeout(() => {
+                        if (taskEl) taskEl.style.outline = "none";
+                      }, 1500);
+                    }
+                  }
+                }}
+              />
               <div ref={bottomRef} />
             </div>
 
@@ -345,7 +420,7 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
                 style={{
                   flex: 1, background: "transparent", border: "none", borderBottom: "1px solid var(--border-accent)",
                   color: "var(--text-primary)", fontSize: "14px", fontFamily: "var(--font-mono)",
-                  padding: "8px 4px", outline: "none", textTransform: "uppercase"
+                  padding: "8px 4px", outline: "none"
                 }}
               />
               <button
@@ -394,7 +469,7 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
               <div className="hud-panel-title">// LIVE PLAN & ACTIVITY</div>
               <div style={{ padding: "12px", overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: "12px" }}>
                 <TranscriptView transcript={currentTranscript} />
-                <ActionLog plan={currentPlan} />
+                <ActionLog plan={currentPlan} selectedTaskId={selectedTaskId} messages={messages} />
               </div>
             </div>
             <div className="hud-panel" style={{ padding: "12px", display: "flex", flexDirection: "column", gap: "8px", flexShrink: 0 }}>
