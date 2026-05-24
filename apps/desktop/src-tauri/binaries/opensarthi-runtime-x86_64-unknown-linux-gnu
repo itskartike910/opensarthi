@@ -3,7 +3,9 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # 1. Resolve the runtime directory inside the AppImage or monorepo
-if [ -d "$SCRIPT_DIR/../lib/OpenSarthi/_up_/_up_/_up_/runtime" ]; then
+if [ -d "/mnt/kartik/ai_desktop_agent_assistant/opensarthi/runtime" ]; then
+    RUNTIME_DIR="/mnt/kartik/ai_desktop_agent_assistant/opensarthi/runtime"
+elif [ -d "$SCRIPT_DIR/../lib/OpenSarthi/_up_/_up_/_up_/runtime" ]; then
     # Production AppImage directory path
     RUNTIME_DIR="$SCRIPT_DIR/../lib/OpenSarthi/_up_/_up_/_up_/runtime"
 elif [ -d "$SCRIPT_DIR/resources/runtime" ]; then
@@ -23,9 +25,19 @@ USER_VENV="$USER_VENV_DIR/.venv"
 # Check if a venv has all required packages
 _check_venv() {
     local venv_python="$1/bin/python3"
-    [ -f "$venv_python" ] && \
-        env -u LD_LIBRARY_PATH -u LD_PRELOAD "$venv_python" \
-            -c "import uvicorn, fastapi, speech_recognition" 2>/dev/null
+    if [ -f "$venv_python" ]; then
+        local err_msg
+        err_msg=$(env -u LD_LIBRARY_PATH -u LD_PRELOAD "$venv_python" -c "import uvicorn, fastapi, speech_recognition" 2>&1)
+        if [ $? -eq 0 ]; then
+            return 0
+        else
+            echo "[SidecarWrapper] Venv check failed for $1: $err_msg" >&2
+            return 1
+        fi
+    else
+        echo "[SidecarWrapper] Venv python not found at $venv_python" >&2
+        return 1
+    fi
 }
 
 # Prefer runtime/.venv (dev) then user venv (production), then fallback to bootstrap

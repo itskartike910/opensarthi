@@ -8,6 +8,103 @@ interface ResponseBubbleProps {
   message: Message;
 }
 
+function parseThinking(content: string): { thinking: string; response: string; isComplete: boolean } {
+  const thinkStart = content.indexOf("<think>");
+  if (thinkStart === -1) {
+    return { thinking: "", response: content, isComplete: false };
+  }
+
+  const thinkEnd = content.indexOf("</think>");
+  if (thinkEnd === -1) {
+    const thinking = content.slice(thinkStart + 7);
+    return { thinking, response: "", isComplete: false };
+  }
+
+  const thinking = content.slice(thinkStart + 7, thinkEnd);
+  const response = content.slice(thinkEnd + 8);
+  return { thinking, response, isComplete: true };
+}
+
+function ThinkingBlock({ thinking, isComplete }: { thinking: string; isComplete: boolean }) {
+  const [isOpen, setIsOpen] = useState(!isComplete);
+
+  useEffect(() => {
+    // Auto collapse after thinking completes
+    if (isComplete) {
+      setIsOpen(false);
+    }
+  }, [isComplete]);
+
+  return (
+    <div style={{
+      border: "1px solid var(--border)",
+      background: "rgba(255,255,255,0.02)",
+      borderRadius: "var(--radius-md)",
+      marginBottom: "8px",
+      overflow: "hidden"
+    }}>
+      <style>{`
+        @keyframes pulseDot {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.85); }
+        }
+      `}</style>
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          padding: "8px 12px",
+          background: "rgba(0,0,0,0.2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          cursor: "pointer",
+          fontSize: "11px",
+          color: "var(--text-secondary)",
+          fontWeight: 600,
+          letterSpacing: "0.05em",
+          userSelect: "none"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <div style={{
+            width: "6px",
+            height: "6px",
+            borderRadius: "50%",
+            background: isComplete ? "var(--text-muted)" : "var(--accent)",
+            boxShadow: isComplete ? "none" : "0 0 8px var(--accent)",
+            animation: isComplete ? "none" : "pulseDot 1.5s infinite"
+          }} />
+          <span style={{ opacity: 0.8 }}>{isComplete ? "THINKING PROCESS" : "THINKING..."}</span>
+        </div>
+        <span style={{ fontSize: "9px", opacity: 0.6 }}>{isOpen ? "COLLAPSE ▲" : "EXPAND ▼"}</span>
+      </div>
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 0.8 }}
+            exit={{ height: 0, opacity: 0 }}
+            style={{
+              padding: "10px 12px",
+              fontSize: "12px",
+              fontFamily: "var(--font-mono)",
+              color: "var(--text-secondary)",
+              borderTop: "1px solid var(--border)",
+              whiteSpace: "pre-wrap",
+              background: "rgba(0,0,0,0.15)",
+              lineHeight: 1.5,
+              maxHeight: "150px",
+              overflowY: "auto"
+            }}
+          >
+            {thinking.trim()}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function ResponseBubble({ message }: ResponseBubbleProps) {
   const isUser = message.role === "user";
   const [displayedContent, setDisplayedContent] = useState("");
@@ -18,7 +115,6 @@ export function ResponseBubble({ message }: ResponseBubbleProps) {
       return;
     }
 
-    // Bypass typewriter effect for old historical messages (older than 4 seconds) to keep UI snaps instant
     const ageMs = Date.now() - message.timestamp;
     if (ageMs > 4000) {
       setDisplayedContent(message.content);
@@ -28,8 +124,6 @@ export function ResponseBubble({ message }: ResponseBubbleProps) {
     const words = message.content.split(" ");
     let currentIdx = 0;
 
-    // Fast, latency-free word-by-word rendering (approx 10 words per second)
-    // Completed exactly in line with or slightly ahead of high-speed TTS playback
     const timer = setInterval(() => {
       if (currentIdx >= words.length) {
         clearInterval(timer);
@@ -38,10 +132,64 @@ export function ResponseBubble({ message }: ResponseBubbleProps) {
         setDisplayedContent(words.slice(0, currentIdx + 1).join(" "));
         currentIdx++;
       }
-    }, 75); // Snappy 75ms word-by-word progression to match 1.35x TTS speed
+    }, 75);
 
     return () => clearInterval(timer);
   }, [message.content, message.timestamp, isUser]);
+
+  const renderContent = (content: string) => {
+    if (!content) return null;
+    const parts = content.split(/(```[\s\S]*?```)/g);
+    return parts.map((part, index) => {
+      if (part.startsWith("```") && part.endsWith("```")) {
+        const lines = part.slice(3, -3).trim().split("\n");
+        let lang = "";
+        let codeLines = lines;
+        if (lines.length > 0 && /^[a-zA-Z0-9_-]+$/.test(lines[0])) {
+          lang = lines[0];
+          codeLines = lines.slice(1);
+        }
+        const codeText = codeLines.join("\n");
+        return (
+          <pre
+            key={index}
+            style={{
+              background: "rgba(0,0,0,0.6)",
+              border: "1px solid var(--border)",
+              padding: "10px",
+              borderRadius: "var(--radius-md)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "12px",
+              color: "var(--text-secondary)",
+              overflowX: "auto",
+              margin: "6px 0",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {lang && (
+              <div
+                style={{
+                  fontSize: "9px",
+                  color: "var(--accent)",
+                  borderBottom: "1px solid var(--border)",
+                  paddingBottom: "4px",
+                  marginBottom: "6px",
+                  textTransform: "uppercase",
+                }}
+              >
+                {lang}
+              </div>
+            )}
+            <code>{codeText}</code>
+          </pre>
+        );
+      }
+      return <span key={index} style={{ whiteSpace: "pre-wrap" }}>{part}</span>;
+    });
+  };
+
+  const { thinking, response, isComplete } = parseThinking(displayedContent);
 
   return (
     <motion.div
@@ -94,12 +242,28 @@ export function ResponseBubble({ message }: ResponseBubbleProps) {
           gap: "8px",
         }}
       >
-        <div>{displayedContent}</div>
+        {thinking && (
+          <ThinkingBlock thinking={thinking} isComplete={isComplete} />
+        )}
         
-        {!isUser && (
+        {response && (
+          <div>{renderContent(response)}</div>
+        )}
+        
+        {!isUser && response && (
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "2px" }}>
             <button
-              onClick={() => wsClient.send("speak_text", { text: message.content })}
+              onClick={() => {
+                // Strip thinking tag before TTS read-out
+                const clean = response
+                  .replace(/```[\s\S]*?```/g, "")
+                  .replace(/`([^`]+)`/g, "$1")
+                  .replace(/[*#_\-]/g, "")
+                  .trim();
+                if (clean) {
+                  wsClient.send("speak_text", { text: clean });
+                }
+              }}
               style={{
                 background: "rgba(255, 0, 0, 0.1)",
                 border: "1px solid var(--border-accent)",

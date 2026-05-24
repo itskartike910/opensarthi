@@ -17,10 +17,39 @@ interface TaskListProps {
   hasActivePlan: boolean;
 }
 
+function isAgenticTask(msg: Message, assistantMsg?: Message): boolean {
+  const p = msg.content.toLowerCase();
+  
+  // Explicit task keywords
+  const hasTaskKeyword = 
+    p.includes("update") || p.includes("upgrade") ||
+    p.includes("install") || p.includes("pacman") || p.includes("yay") ||
+    p.includes("remove") || p.includes("uninstall") ||
+    p.includes("reboot") || p.includes("restart") ||
+    p.includes("shutdown") || p.includes("poweroff") ||
+    p.includes("search") || p.includes("find") || p.includes("grep") ||
+    p.includes("open") || p.includes("launch") || p.includes("start") ||
+    p.includes("create") || p.includes("write") || p.includes("mkdir") || p.includes("touch") ||
+    p.includes("kill") || p.includes("pkill") || p.includes("stop process") ||
+    p.includes("shell") || p.includes("command") || p.includes("run") || p.includes("sudo");
+
+  if (hasTaskKeyword) return true;
+
+  // If assistant responded with a plan block
+  if (assistantMsg) {
+    const content = assistantMsg.content;
+    if (content.includes("```json") || content.includes('"tool":') || content.includes('"steps":')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function parseTask(prompt: string): { title: string; icon: string } {
   const p = prompt.toLowerCase().trim();
-  let title = "GENERAL INQUIRY";
-  let icon = "💬";
+  let title = "DESKTOP AGENT TASK";
+  let icon = "🤖";
   
   if (p.includes("update") || p.includes("upgrade")) {
     title = "SYSTEM UPDATE";
@@ -52,31 +81,34 @@ function parseTask(prompt: string): { title: string; icon: string } {
   } else if (p.includes("shell") || p.includes("command") || p.includes("run") || p.includes("sudo") || p.includes("pkexec")) {
     title = "SHELL EXECUTION";
     icon = "🐚";
-  } else if (p.length > 0) {
-    // Fallback: use first few words in uppercase
+  } else if (prompt.trim().length > 0) {
     const words = prompt.trim().split(/\s+/).slice(0, 3).map(w => w.replace(/[^a-zA-Z]/g, "").toUpperCase()).filter(Boolean);
     if (words.length > 0) {
       title = words.join(" ");
-    } else {
-      title = "DESKTOP AGENT TASK";
     }
-    icon = "🤖";
   }
   
   return { title, icon };
 }
 
 export function TaskList({ messages, voiceState, hasActivePlan }: TaskListProps) {
-  // Extract all user messages as task nodes
-  const userMessages = messages.filter((m) => m.role === "user");
+  // Extract only agentic user messages
+  const agenticUserMessages = messages.filter((m) => {
+    if (m.role !== "user") return false;
+    
+    // Find corresponding assistant message
+    const userIdx = messages.findIndex((x) => x.id === m.id);
+    const nextAssistantMsg = messages.slice(userIdx + 1).find((x) => x.role === "assistant");
+    
+    return isAgenticTask(m, nextAssistantMsg);
+  });
 
-  const tasks: Task[] = userMessages.map((msg, index) => {
+  const tasks: Task[] = agenticUserMessages.map((msg, index) => {
     const { title, icon } = parseTask(msg.content);
-    const isLatest = index === userMessages.length - 1;
+    const isLatest = index === agenticUserMessages.length - 1;
     
     let status: Task["status"] = "success";
     if (isLatest) {
-      // Check if there is an assistant reply after the latest user message
       const latestUserMsgIndex = messages.findIndex((m) => m.id === msg.id);
       const hasResponse = messages.slice(latestUserMsgIndex + 1).some((m) => m.role === "assistant");
       
@@ -88,7 +120,6 @@ export function TaskList({ messages, voiceState, hasActivePlan }: TaskListProps)
         }
       }
     } else {
-      // Past messages are checked for errors in the subsequent assistant message
       const currentIdx = messages.findIndex((m) => m.id === msg.id);
       const nextMsgs = messages.slice(currentIdx + 1);
       const nextAssistantMsg = nextMsgs.find((m) => m.role === "assistant");
@@ -115,7 +146,7 @@ export function TaskList({ messages, voiceState, hasActivePlan }: TaskListProps)
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.5 }}>
         <p style={{ color: "var(--text-secondary)", fontSize: "12px", letterSpacing: "0.05em", textAlign: "center" }}>
-          // NO TASKS DETECTED
+          // NO ACTIVE TASKS
         </p>
       </div>
     );

@@ -164,7 +164,14 @@ body {
   letter-spacing: 0.05em;
 }
 
-.selectable { user-select: text; }
+.selectable { 
+  user-select: text; 
+  text-transform: none;
+}
+
+input, textarea {
+  text-transform: none;
+}
 
 #root {
   width: 100vw;

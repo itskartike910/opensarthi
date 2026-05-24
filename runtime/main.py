@@ -29,5 +29,5 @@ if __name__ == "__main__":
     print(f"PORT:{port}", flush=True)
     # ──────────────────────────────────────────────────────
     
-    logger.info("Starting OpenSarthi runtime server", port=port)
+    logger.info("Starting OpenSarthi runtime server", port=port, sys_executable=sys.executable)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

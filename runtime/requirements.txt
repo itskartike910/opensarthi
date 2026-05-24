@@ -18,3 +18,7 @@ aiosqlite>=0.20
 lancedb>=0.15
 sentence-transformers>=3.3
 structlog>=24.4
+psutil>=6.0
+sounddevice>=0.5
+torchaudio>=2.0
+

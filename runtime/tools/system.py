@@ -1,59 +1,74 @@
 import asyncio
 import re
-import structlog
+from tools.base import BaseTool, RiskLevel
+from planner.schemas import ToolResult, ToolResultConfidence
 
-logger = structlog.get_logger()
+class ShellTool(BaseTool):
+    name = "shell"
+    description = "Execute a shell command inside a bubblewrap sandbox. Use for read-only operations. Args: command (string)"
+    risk_level = RiskLevel.DANGEROUS
 
-class SystemTools:
-    def __init__(self):
-        self.use_bwrap = self._check_bwrap()
-        # Basic regex to catch obvious destructive commands if bwrap fails
-        self.dangerous_pattern = re.compile(r"rm\s+-rf\s+/|mkfs|dd\s+if=")
+    # Blocked patterns — never execute these
+    BLOCKED = [
+        r"rm\s+-rf\s+/",
+        r"mkfs\.",
+        r"dd\s+if=.+of=/dev/",
+        r":\(\)\{.*\}",  # fork bomb
+        r"chmod\s+-R\s+777\s+/",
+        r">\s*/dev/sd",
+    ]
 
-    def _check_bwrap(self) -> bool:
-        # In a real setup, verify `bwrap` exists in PATH
-        return True
+    async def execute(self, args: dict, permission_manager = None) -> ToolResult:
+        command = args.get("command", "")
+        timeout = float(args.get("timeout", 30))
 
-    async def run_command(self, command: str) -> str:
-        if self.dangerous_pattern.search(command):
-            return "Error: Command rejected by security filter."
+        if not command:
+            return ToolResult.fail("No command provided", retryable=False)
 
-        if self.use_bwrap:
-            # Construct a sandboxed command using bubblewrap
-            # Read-only root, read-write home, no network (unless explicitly requested)
-            safe_command = [
-                "bwrap",
-                "--ro-bind", "/", "/",
-                "--dev", "/dev",
-                "--proc", "/proc",
-                "--bind", "/home", "/home",
-                "--bind", "/run", "/run",
-                "--bind", "/tmp", "/tmp",
-                "--share-net",
-                "bash", "-c", command
-            ]
-        else:
-            safe_command = ["bash", "-c", command]
+        # If command contains sudo, ask user for password
+        if "sudo" in command and permission_manager:
+            password = await permission_manager.request_user_input(
+                prompt=f"The command requires sudo privileges: `{command}`. Please enter your sudo password:",
+                input_type="password"
+            )
+            if password:
+                # Rewrite sudo to use sudo -S with piped password
+                command = re.sub(r'\bsudo\b', f'echo "{password}" | sudo -S', command)
 
-        logger.info("Executing shell command", command=command, sandboxed=self.use_bwrap)
-        
+        # Safety check
+        for pattern in self.BLOCKED:
+            if re.search(pattern, command):
+                return ToolResult.fail(
+                    f"Blocked dangerous pattern in command: '{command}'",
+                    retryable=False
+                )
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                *safe_command,
+                "bash", "-c", command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
-            # If the user instructed to run in background, don't wait for it
-            if command.strip().endswith("&"):
-                return f"Started in background (PID: {proc.pid})"
-                
-            stdout, stderr = await proc.communicate()
-            
-            result = stdout.decode()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return ToolResult.fail(f"Command timed out after {timeout}s", retryable=False)
+
             if proc.returncode != 0:
-                result += f"\nError: {stderr.decode()}"
-            return result
+                err_text = stderr.decode()[:500] or f"Process exited with code {proc.returncode}"
+                return ToolResult.fail(
+                    err_text,
+                    retryable=False,
+                    raw_output={"returncode": proc.returncode, "stderr": stderr.decode()}
+                )
+
+            output = stdout.decode()[:2000]  # Truncate large outputs
+            return ToolResult.ok(
+                observation=output if output else "(command completed with no output)",
+                confidence=ToolResultConfidence.HIGH,
+                raw_output={"returncode": 0, "stdout": output}
+            )
+
         except Exception as e:
-            logger.error("Command execution failed", error=str(e))
-            return f"Error executing command: {str(e)}"
+            return ToolResult.fail(str(e))

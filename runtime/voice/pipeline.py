@@ -1,26 +1,44 @@
 import asyncio
 import structlog
 import queue
-from typing import AsyncGenerator
-import speech_recognition as sr
 import threading
 import time
+import shutil
+import os
+import numpy as np
+import speech_recognition as sr
+from typing import AsyncGenerator
+
+from voice.stt import FasterWhisperSTT
 
 logger = structlog.get_logger()
 
 class VoicePipeline:
     def __init__(self):
         self.is_listening = False
+        self.is_speaking = False
+        self.is_recording_command = False
+        self.current_playback_id = ""
+        self.on_voice_state = None
+        self.last_speech_time = 0.0
+        self.start_recording_time = 0.0
+        self.last_speech_stop_time = 0.0
+        self._speech_buffer = []
+
         self.recognizer = sr.Recognizer()
         self.audio_queue = queue.Queue()
         self.listen_thread = None
-        self.current_playback_id = ""
-        self.is_speaking = False
+        self.stt = FasterWhisperSTT()
 
     async def initialize(self):
-        """Lazy load models."""
+        """Pre-adjust for ambient noise and pre-load local offline STT model."""
         logger.info("Initializing voice models")
-        # Pre-adjust for ambient noise if mic is available
+        try:
+            import pyaudio
+            logger.info("PyAudio imported successfully in pipeline")
+        except Exception as pe:
+            logger.exception("Failed to import pyaudio directly")
+
         try:
             with sr.Microphone() as source:
                 self.recognizer.adjust_for_ambient_noise(source, duration=1)
@@ -28,87 +46,75 @@ class VoicePipeline:
         except Exception as e:
             logger.warning(f"Could not initialize microphone: {e}")
 
+        try:
+            # Pre-load local STT model in background so first-time capture is instantaneous
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self.stt.load)
+            logger.info("Local offline STT model pre-loaded successfully.")
+        except Exception as e:
+            logger.error(f"Could not pre-load STT model: {e}")
+
     def _listen_worker(self):
-        with sr.Microphone() as source:
-            while self.is_listening:
-                try:
-                    # Listen for phrases without fixed time constraints to support long inputs
-                    audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=None)
-                    self.audio_queue.put(audio)
-                except sr.WaitTimeoutError:
-                    continue
-                except Exception as e:
-                    logger.error(f"Mic error: {e}")
-                    time.sleep(1)
+        try:
+            with sr.Microphone() as source:
+                while self.is_listening:
+                    if self.is_speaking or (time.time() - getattr(self, 'last_speech_stop_time', 0.0) < 1.5):
+                        # Empty queue continuously during active speech and cooldown period
+                        while not self.audio_queue.empty():
+                            try:
+                                self.audio_queue.get_nowait()
+                            except Exception:
+                                pass
+                        time.sleep(0.1)
+                        continue
+                    try:
+                        # Listen for audio phrase
+                        audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=8)
+                        # Re-verify that speaking/cooldown didn't trigger while listening
+                        if not self.is_speaking and (time.time() - getattr(self, 'last_speech_stop_time', 0.0) >= 1.5):
+                            self.audio_queue.put(audio)
+                    except sr.WaitTimeoutError:
+                        continue
+                    except Exception as e:
+                        logger.error(f"Mic error: {e}")
+                        time.sleep(1)
+        except Exception as e:
+            logger.error(f"Failed to open microphone: {e}")
 
     async def start_listening(self) -> AsyncGenerator[str, None]:
         self.is_listening = True
         logger.info("Started native Python listening")
         
-        # Start background listening thread
+        # Clear queue on startup
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except Exception:
+                pass
+
         self.listen_thread = threading.Thread(target=self._listen_worker, daemon=True)
         self.listen_thread.start()
         
         try:
             while self.is_listening:
-                # Flush the audio queue continuously if assistant is speaking
-                if getattr(self, "is_speaking", False):
-                    while not self.audio_queue.empty():
-                        try:
-                            self.audio_queue.get_nowait()
-                        except queue.Empty:
-                            break
-                    await asyncio.sleep(0.1)
-                    continue
-
-                # Process audio queue asynchronously
                 while not self.audio_queue.empty():
                     audio = self.audio_queue.get()
+                    if self.is_speaking or (time.time() - getattr(self, 'last_speech_stop_time', 0.0) < 1.5):
+                        continue
                     try:
-                        # Double check speaking state
-                        if getattr(self, "is_speaking", False):
-                            continue
-
-                        # Resolve correct Speech-to-Text (STT) language based on active voice accent
-                        rec_lang = "en-IN"
-                        try:
-                            from config import settings
-                            voice_config = getattr(settings, "voice_accent", "ie")
-                            
-                            if voice_config in ['fr', 'es', 'de', 'hi', 'ja', 'it', 'pt']:
-                                if voice_config == 'hi':
-                                    rec_lang = 'hi-IN'
-                                elif voice_config == 'ja':
-                                    rec_lang = 'ja-JP'
-                                elif voice_config == 'pt':
-                                    rec_lang = 'pt-BR'
-                                else:
-                                    rec_lang = f"{voice_config}-{voice_config.upper()}"
-                            elif voice_config == 'co.uk':
-                                rec_lang = 'en-GB'
-                            elif voice_config == 'com':
-                                rec_lang = 'en-US'
-                            elif voice_config == 'com.au':
-                                rec_lang = 'en-AU'
-                            elif voice_config == 'ca':
-                                rec_lang = 'en-CA'
-                            elif voice_config == 'co.nz':
-                                rec_lang = 'en-NZ'
-                            else:
-                                rec_lang = 'en-IE'
-                        except Exception:
-                            pass
-
-                        # Use Google Web Speech API for fast, free recognition
-                        text = self.recognizer.recognize_google(audio, language=rec_lang)
+                        # Convert audio to numpy float32 array at 16kHz
+                        raw_data = audio.get_raw_data(convert_rate=16000, convert_width=2)
+                        audio_array = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32767.0
+                        
+                        # Transcribe locally in background executor (completely network-free offline transcription)
+                        loop = asyncio.get_running_loop()
+                        text, confidence = await loop.run_in_executor(None, self.stt.transcribe, audio_array)
+                        
                         if text:
-                            logger.info(f"Transcribed ({rec_lang}): {text}")
+                            logger.info(f"Local offline STT transcribed: {text}")
                             yield text
-                    except sr.UnknownValueError:
-                        # Could not understand audio
-                        pass
-                    except sr.RequestError as e:
-                        logger.error(f"STT API Error: {e}")
+                    except Exception as e:
+                        logger.error(f"Local STT processing failed: {e}")
                 
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
@@ -116,11 +122,26 @@ class VoicePipeline:
         finally:
             self.stop_listening()
 
-    async def stop_listening(self):
+    def stop_listening(self):
         self.is_listening = False
         if self.listen_thread:
             self.listen_thread = None
         logger.info("Stopped native Python listening")
+
+    def stop_speaking(self):
+        """Immediately interrupt any active speech playback."""
+        self.current_playback_id = ""
+        import os
+        os.system("killall -9 mpg123 mpv paplay aplay >/dev/null 2>&1")
+        self.is_speaking = False
+        self.last_speech_stop_time = time.time()
+        # Drain queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except Exception:
+                pass
+        logger.info("Interrupted and stopped speech synthesis")
 
     async def speak(self, text: str) -> str:
         """Synthesize and speak text using the best available Linux voice engine, awaiting completion."""
@@ -201,7 +222,7 @@ class VoicePipeline:
                     mp3_paths = [f"/tmp/opensarthi_voice_{i}.mp3" for i in range(len(sentences))]
                     wav_paths = [f"/tmp/opensarthi_voice_{i}.wav" for i in range(len(sentences))]
                     
-                    # sequential downloader background thread (pre-fetches next sentences while playing current ones)
+                    # sequential downloader background thread
                     def download_worker(p_id):
                         for idx, sentence in enumerate(sentences):
                             if p_id != self.current_playback_id:
@@ -218,11 +239,9 @@ class VoicePipeline:
                     def _play_gtts(p_id):
                         try:
                             for idx in range(len(sentences)):
-                                # Check if we've been interrupted by a newer playback request
                                 if p_id != self.current_playback_id:
                                     return
                                     
-                                # Wait for this specific chunk to finish downloading
                                 while not downloaded[idx]:
                                     if p_id != self.current_playback_id:
                                         return
@@ -234,7 +253,6 @@ class VoicePipeline:
                                 if not os.path.exists(mp3_path):
                                     continue
                                     
-                                # Speed up using ffmpeg atempo if available to achieve perfect, pitch-corrected fast playback
                                 speedup_mp3_path = f"/tmp/opensarthi_voice_fast_{idx}.mp3"
                                 if shutil.which("ffmpeg"):
                                     try:
@@ -243,7 +261,6 @@ class VoicePipeline:
                                     except Exception as fe:
                                         logger.warning(f"ffmpeg speedup failed on chunk {idx}: {fe}")
                                         
-                                # Pre-convert to WAV in case we need to fall back to paplay/aplay (PulseAudio standard)
                                 wav_converted = False
                                 if shutil.which("mpg123"):
                                     try:
@@ -257,12 +274,10 @@ class VoicePipeline:
                                         wav_converted = True
                                     except Exception:
                                         pass
-
-                                # Double-check interruption right before playing
+ 
                                 if p_id != self.current_playback_id:
                                     return
-
-                                # Find the best terminal audio player on host and play chunk
+ 
                                 played = False
                                 if shutil.which("mpv"):
                                     if mp3_path == speedup_mp3_path:
@@ -272,7 +287,6 @@ class VoicePipeline:
                                     played = True
                                     
                                 if not played and shutil.which("mpg123"):
-                                    # Force pulse or alsa output driver to prevent silent blocks/locks under PipeWire
                                     for driver in ["pulse", "alsa"]:
                                         exit_code = os.system(f"mpg123 -o {driver} {mp3_path} >/dev/null 2>&1")
                                         if exit_code == 0:
@@ -304,16 +318,13 @@ class VoicePipeline:
                         except Exception as ex:
                             logger.error(f"gTTS playback failure: {ex}")
                     
-                    # Start pre-fetch worker thread
                     threading.Thread(target=download_worker, args=(playback_id,), daemon=True).start()
-                    
-                    # Await playback worker thread pool execution in a responsive way
                     await asyncio.to_thread(_play_gtts, playback_id)
                     logger.info("Speech synthesis streaming completed successfully")
                     return "gtts"
                 except Exception as e:
                     logger.warning(f"Failed to play premium gTTS voice: {e}")
-
+ 
             # Layer 2: Speech Dispatcher client (Offline Fallback)
             if shutil.which("spd-say"):
                 try:
@@ -327,7 +338,7 @@ class VoicePipeline:
                     return "spd-say"
                 except Exception as e:
                     logger.warning(f"spd-say fallback execution failed: {e}")
-
+ 
             # Layer 3: eSpeak (Offline Fallback)
             if shutil.which("espeak"):
                 try:
@@ -341,8 +352,15 @@ class VoicePipeline:
                     return "espeak"
                 except Exception as e:
                     logger.warning(f"espeak fallback execution failed: {e}")
-
+ 
             logger.warning("No speech synthesis engines could play the audio output!")
             return "none"
         finally:
             self.is_speaking = False
+            self.last_speech_stop_time = time.time()
+            # Drain any audio that was queued during speech
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except Exception:
+                    pass

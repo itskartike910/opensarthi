@@ -97,8 +97,14 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
       // Clean slate on toggle
       setTextInput("");
       useAssistantStore.getState().setTranscript("");
+      wsClient.send("voice_state", { state: "listening" });
     } else if (voiceState === "listening") {
       setVoiceState("idle");
+      wsClient.send("voice_state", { state: "idle" });
+    } else if (voiceState === "speaking") {
+      wsClient.send("stop_speech", {});
+      const { continuousListening } = useAssistantStore.getState();
+      setVoiceState(continuousListening ? "listening" : "idle");
     }
   }, [voiceState, setVoiceState]);
 
@@ -163,9 +169,24 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onNewChat }: A
           lastSentSourceRef.current === "voice" &&
           lastMsg.content
         ) {
+          let textToSpeak = String(lastMsg.content);
+          
+          // Strip <think>...</think> block
+          const thinkEnd = textToSpeak.indexOf("</think>");
+          if (thinkEnd !== -1) {
+            textToSpeak = textToSpeak.slice(thinkEnd + 8);
+          } else if (textToSpeak.includes("<think>")) {
+            // Still thinking, wait until </think> is reached
+            return;
+          }
+
           // Strip markdown elements, code blocks, bullet formatting, for crystal clear voice reading
-          const clean = String(lastMsg.content)
-            .replace(/```[\s\S]*?```/g, "")
+          let clean = textToSpeak.replace(/```[\s\S]*?```/g, "");
+          
+          // Strip raw JSON array blocks just in case LLM forgot backticks
+          clean = clean.replace(/\[\s*\{[\s\S]*\}\s*\]/g, "");
+          
+          clean = clean
             .replace(/`([^`]+)`/g, "$1")
             .replace(/[*#_\-]/g, "")
             .trim();

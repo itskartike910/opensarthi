@@ -26,6 +26,12 @@ export const WSMessageTypeSchema = z.enum([
   "speech_started",
   "speech_completed",
   "settings_sync",
+  "voice_state",
+  "stop_speech",
+  "input_request",
+  "input_response",
+  "delete_thread",
+  "delete_all_threads",
 ]);
 export type WSMessageType = z.infer<typeof WSMessageTypeSchema>;
 

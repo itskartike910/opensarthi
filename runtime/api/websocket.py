@@ -5,8 +5,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Any
 
 from planner.agent import agent, AgentDependencies
-from tools.desktop import DesktopTools
-from tools.system import SystemTools
 from voice.pipeline import VoicePipeline
 
 logger = structlog.get_logger()
@@ -16,9 +14,12 @@ class Session:
     def __init__(self, websocket: WebSocket):
         self.ws = websocket
         self.session_id = str(uuid.uuid4())
-        self.desktop_tools = DesktopTools()
-        self.system_tools = SystemTools()
         self.voice_pipeline = VoicePipeline()
+        loop = asyncio.get_event_loop()
+        self.voice_pipeline.on_voice_state = lambda state: asyncio.run_coroutine_threadsafe(
+            self.send_message("voice_state", {"state": state}),
+            loop
+        )
         async def log_action_cb(tool: str, description: str, status: str, result: Any = None):
             await self.send_message("tool_action", {
                 "tool": tool,
@@ -28,8 +29,6 @@ class Session:
             })
 
         self.deps = AgentDependencies(
-            desktop=self.desktop_tools,
-            system=self.system_tools,
             log_action=log_action_cb
         )
         import db
@@ -43,6 +42,50 @@ class Session:
             "timestamp": int(asyncio.get_event_loop().time() * 1000)
         }
         await self.ws.send_json(msg)
+
+    async def request_permission(self, tool_name: str, args: dict) -> bool:
+        """Ask user for permission to execute a dangerous tool, yielding control back on response."""
+        from state_machine import AgentState
+        self.pending_input = asyncio.Future()
+        try:
+            req_id = str(uuid.uuid4())
+            await self.send_message("permission_request", {
+                "request_id": req_id,
+                "tool": tool_name,
+                "args": args,
+                "risk_level": "dangerous",
+                "description": f"Execute dangerous action: {tool_name} with arguments {args}?",
+                "timeout_seconds": 30
+            })
+            if hasattr(self, '_current_runtime') and self._current_runtime:
+                await self._current_runtime._transition(AgentState.ASKING_PERMISSION)
+                
+            response = await self.pending_input
+            return response.get("allow", response.get("approved", False))
+        finally:
+            self.pending_input = None
+
+    async def request_user_input(self, prompt: str, input_type: str = "text") -> str:
+        """Ask user for arbitrary text input (e.g. password for sudo), yielding control back on response."""
+        from state_machine import AgentState
+        self.pending_input = asyncio.Future()
+        try:
+            await self.send_message("input_request", {
+                "prompt": prompt,
+                "input_type": input_type
+            })
+            if hasattr(self, '_current_runtime') and self._current_runtime:
+                await self._current_runtime._transition(AgentState.ASKING_PERMISSION)
+                
+            response = await self.pending_input
+            return response.get("value", "")
+        finally:
+            self.pending_input = None
+
+    async def emit_state(self, state_ctx):
+        """Broadcast current agent state to the frontend UI."""
+        await self.send_message("agent_state", state_ctx.to_dict())
+
 
     async def speak(self, text: str):
         """Play speech and broadcast speech status events to the client."""
@@ -190,37 +233,54 @@ class Session:
                 elif msg["role"] == "assistant":
                     message_history.append(ModelResponse(parts=[TextPart(content=msg["content"])]))
 
+            from agent_runtime import AgentRuntime
+            from observation import DesktopObserver
+
+            observer = DesktopObserver()
+            runtime = AgentRuntime(ws_handler=self, agent=agent, observer=observer, deps=self.deps)
+            self._current_runtime = runtime
+
             prefix_warning = ""
+            usage = None
             try:
-                result = await agent.run(text, deps=self.deps, model=active_model, message_history=message_history)
+                final_output = await runtime.run(
+                    goal=text,
+                    model=active_model,
+                    message_history=message_history
+                )
+                usage = runtime.last_usage
             except Exception as cloud_err:
                 if not is_cloud:
                     raise cloud_err
                 
-                logger.warning("Cloud agent execution failed, falling back to local model...", error=str(cloud_err))
-                from pydantic_ai.models.ollama import OllamaModel
-                from planner.agent import Agent, AgentDependencies
-                
-                # Recreate a simple fallback agent without tools in case tools caused the 400 Bad Request
-                fallback_agent = Agent(
-                    model=OllamaModel(settings.local_model),
-                    deps_type=AgentDependencies,
-                    system_prompt="You are OpenSarthi. Answer the user strictly using plain text. Do not hallucinate tools."
-                )
+                err_type = type(cloud_err).__name__
+                err_detail = str(cloud_err).strip() or err_type
+                logger.warning("Cloud agent execution failed, falling back to local model...", error=err_detail)
                 
                 try:
-                    result = await fallback_agent.run(text, deps=self.deps, message_history=message_history)
+                    from pydantic_ai.models.ollama import OllamaModel
+                    from agent_runtime import AgentRuntime
+                    from observation import DesktopObserver
+                    
+                    local_model = OllamaModel(settings.local_model)
+                    local_observer = DesktopObserver()
+                    local_runtime = AgentRuntime(ws_handler=self, agent=agent, observer=local_observer, deps=self.deps)
+                    
+                    final_output = await local_runtime.run(
+                        goal=text,
+                        model=local_model,
+                        message_history=message_history
+                    )
+                    usage = local_runtime.last_usage
                 except Exception as local_err:
                     logger.error("Local agent fallback failed", error=str(local_err))
-                    raise Exception(f"Cloud model failed ({cloud_err}) AND local model fallback failed ({local_err})")
+                    raise Exception(f"Cloud failed ({err_detail}) AND local fallback failed ({str(local_err)})")
                 
-                prefix_warning = f"⚠️ **Cloud Model Failed** ({str(cloud_err)[:80]}...)\n*Fell back to local model: `{settings.local_model}`*\n\n---\n\n"
-
-            final_output = prefix_warning + result.output
+                prefix_warning = f"⚠️ **Cloud API Timeout** — fell back to local model `{settings.local_model}`\n\n"
+                final_output = prefix_warning + final_output
 
             # Extract token usage
             try:
-                usage = result.usage  # PydanticAI >= 0.0.x changed usage to a property
                 request_tokens = getattr(usage, "request_tokens", 0) or 0
                 response_tokens = getattr(usage, "response_tokens", 0) or 0
                 total_tokens = getattr(usage, "total_tokens", 0) or (request_tokens + response_tokens)
@@ -259,12 +319,59 @@ class Session:
             await self.handle_user_message(payload.get("text", ""), source=payload.get("source", "text"))
         elif msg_type == "session_state":
             pass # Keep mic listening for continuous wake word
+        elif msg_type == "voice_state":
+            state = payload.get("state")
+            if state == "listening":
+                import time
+                self.voice_pipeline.is_recording_command = True
+                self.voice_pipeline._speech_buffer = []
+                self.voice_pipeline.last_speech_time = time.time()
+                self.voice_pipeline.start_recording_time = time.time()
+                logger.info("[WebSocket] Manual voice listening triggered by user. Bypassing wake word.")
+            elif state == "idle":
+                self.voice_pipeline.is_recording_command = False
+                logger.info("[WebSocket] Manual voice listening stopped by user.")
         elif msg_type == "new_chat":
             import db
             self.thread_id = db.create_thread()
             logger.info("Created new chat thread", thread_id=self.thread_id)
+        elif msg_type == "cancel_execution":
+            if hasattr(self, '_current_runtime') and self._current_runtime:
+                self._current_runtime.request_cancel()
+                await self.send_message("agent_state", {
+                    "state": "idle",
+                    "goal": None,
+                    "step": 0,
+                    "step_description": None,
+                    "total_steps": 0,
+                    "retry_count": 0,
+                    "error": None
+                })
+        elif msg_type == "permission_response":
+            if hasattr(self, 'pending_input') and self.pending_input and not self.pending_input.done():
+                self.pending_input.set_result(payload)
+        elif msg_type == "input_response":
+            if hasattr(self, 'pending_input') and self.pending_input and not self.pending_input.done():
+                self.pending_input.set_result(payload)
         elif msg_type == "get_history":
             import db
+            threads = db.get_all_threads()
+            await self.send_message("history_response", {"threads": threads})
+        elif msg_type == "delete_thread":
+            import db
+            tid = payload.get("thread_id")
+            if tid:
+                db.delete_thread(tid)
+                logger.info("Deleted thread", thread_id=tid)
+                if self.thread_id == tid:
+                    self.thread_id = db.create_thread()
+                threads = db.get_all_threads()
+                await self.send_message("history_response", {"threads": threads})
+        elif msg_type == "delete_all_threads":
+            import db
+            db.delete_all_threads()
+            logger.info("Deleted all threads")
+            self.thread_id = db.create_thread()
             threads = db.get_all_threads()
             await self.send_message("history_response", {"threads": threads})
         elif msg_type == "speak_text":
@@ -279,6 +386,11 @@ class Session:
                 if clean_text:
                     logger.info("Replaying speech synthesis via WebSocket request", text=clean_text)
                     asyncio.create_task(self.speak(clean_text))
+        elif msg_type == "stop_speech":
+            logger.info("Received request to stop speech synthesis")
+            if hasattr(self, 'voice_pipeline') and self.voice_pipeline:
+                self.voice_pipeline.stop_speaking()
+            await self.send_message("speech_completed", {})
         elif msg_type == "load_thread":
             import db
             thread_id = payload.get("thread_id")
@@ -310,6 +422,17 @@ class Session:
             settings.continuous_listening = bool(payload.get("continuous_listening", settings.continuous_listening))
             settings.active_theme = payload.get("active_theme", settings.active_theme)
             
+            # Wake word settings
+            raw_wake = payload.get("wake_words")
+            if raw_wake is not None:
+                if isinstance(raw_wake, str):
+                    settings.wake_words = [w.strip() for w in raw_wake.split(",") if w.strip()]
+                elif isinstance(raw_wake, list):
+                    settings.wake_words = [str(w).strip() for w in raw_wake if str(w).strip()]
+            
+            settings.wake_word_enabled = bool(payload.get("wake_word_enabled", settings.wake_word_enabled))
+            settings.wake_word_threshold = float(payload.get("wake_word_threshold", settings.wake_word_threshold))
+
             save_settings_to_env(
                 settings.local_model,
                 settings.cloud_model,
@@ -322,8 +445,20 @@ class Session:
                 settings.voice_accent,
                 settings.voice_speed,
                 settings.continuous_listening,
-                settings.active_theme
+                settings.active_theme,
+                settings.wake_words,
+                settings.wake_word_enabled,
+                settings.wake_word_threshold
             )
+            
+            # Propagate to running voice pipeline
+            if hasattr(self, 'voice_pipeline') and self.voice_pipeline:
+                try:
+                    self.voice_pipeline.wake_detector.update_phrases(settings.wake_words)
+                    self.voice_pipeline.wake_detector.threshold = settings.wake_word_threshold
+                except Exception as ve:
+                    logger.warning("Failed to propagate wake word updates to pipeline", error=str(ve))
+            
             logger.info("Settings updated", provider=settings.ai_provider, model=settings.cloud_model)
 
     async def _listen_loop(self):
@@ -341,6 +476,14 @@ class ConnectionManager:
         self.sessions[websocket] = session
         logger.info("Client connected", session_id=session.session_id)
         
+        # Eagerly pre-load voice models in the background to prevent lazy-loading lag spikes and websocket connection timeout
+        async def init_task():
+            try:
+                await session.voice_pipeline.initialize()
+            except Exception as e:
+                logger.error("Failed to initialize voice pipeline models", error=str(e))
+        asyncio.create_task(init_task())
+        
         # Send current settings on startup
         from config import settings
         await session.send_message("settings_sync", {
@@ -355,7 +498,10 @@ class ConnectionManager:
             "voice_accent": settings.voice_accent,
             "voice_speed": settings.voice_speed,
             "continuous_listening": settings.continuous_listening,
-            "active_theme": getattr(settings, "active_theme", "theme-red-black")
+            "active_theme": getattr(settings, "active_theme", "theme-red-black"),
+            "wake_words": getattr(settings, "wake_words", ["hey sarthi", "hello sarthi"]),
+            "wake_word_enabled": getattr(settings, "wake_word_enabled", True),
+            "wake_word_threshold": getattr(settings, "wake_word_threshold", 0.5)
         })
         
         asyncio.create_task(session._listen_loop())
