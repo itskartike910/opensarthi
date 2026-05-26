@@ -1,6 +1,6 @@
 from typing import Optional
 from tools.base import BaseTool
-from tools.desktop import ClickTool, TypeTextTool, PressKeyTool, OpenAppTool, ClickElementTool
+from tools.desktop import ClickTool, TypeTextTool, PressKeyTool, OpenAppTool, ClickElementTool, FocusWindowTool
 from tools.system import ShellTool
 from tools.wait_tools import WaitForWindowTool, WaitForTextTool
 
@@ -16,6 +16,7 @@ _register(
     TypeTextTool(),
     PressKeyTool(),
     OpenAppTool(),
+    FocusWindowTool(),
     ClickElementTool(),
     ShellTool(),
     WaitForWindowTool(),

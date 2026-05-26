@@ -2,6 +2,10 @@
 # Get the absolute path to this script's directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Clean up AppImage environment variables to avoid python execution crashes
+unset PYTHONHOME
+unset PYTHONPATH
+
 # 1. Resolve the runtime directory inside the AppImage or monorepo
 if [ -d "/mnt/kartik/ai_desktop_agent_assistant/opensarthi/runtime" ]; then
     RUNTIME_DIR="/mnt/kartik/ai_desktop_agent_assistant/opensarthi/runtime"
@@ -50,18 +54,60 @@ else
     echo "Bootstrapping Python virtual environment inside $USER_VENV_DIR..."
     mkdir -p "$USER_VENV_DIR"
     
-    # Find a working Python 3.10+
-    PYTHON_BIN=""
-    for py in python3.12 python3.11 python3.10 python3 /usr/bin/python3 /bin/python3 /opt/homebrew/bin/python3; do
-        if env -u LD_LIBRARY_PATH "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
-            PYTHON_BIN="$py"
-            break
-        fi
-    done
+    # Check for portable Python first
+    PORTABLE_PYTHON_DIR="$USER_VENV_DIR/portable_python"
+    PORTABLE_PYTHON_BIN="$PORTABLE_PYTHON_DIR/bin/python3"
     
+    PYTHON_BIN=""
+    if [ -f "$PORTABLE_PYTHON_BIN" ]; then
+        PYTHON_BIN="$PORTABLE_PYTHON_BIN"
+    fi
+
+    # Find a working Python 3.10+ on the system if no portable Python exists
     if [ -z "$PYTHON_BIN" ]; then
-        echo "ERROR: Python 3.10+ not found on this system. Please install Python 3 first."
-        exit 1
+        for py in python3.12 python3.11 python3.10 python3 /usr/bin/python3 /bin/python3 /opt/homebrew/bin/python3; do
+            if env -u LD_LIBRARY_PATH "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
+                PYTHON_BIN="$py"
+                break
+            fi
+        done
+    fi
+    
+    # Download portable Python build if still not found
+    if [ -z "$PYTHON_BIN" ]; then
+        echo "No compatible Python 3.10+ found on this system."
+        echo "Downloading self-contained Python runtime for OpenSarthi..."
+        mkdir -p "$USER_VENV_DIR"
+        
+        PYTHON_TAR_URL="https://github.com/indygreg/python-build-standalone/releases/download/20240107/cpython-3.10.13%2B20240107-x86_64-unknown-linux-gnu-install_only.tar.gz"
+        TAR_PATH="$USER_VENV_DIR/python.tar.gz"
+        
+        if command -v curl >/dev/null 2>&1; then
+            curl -L "$PYTHON_TAR_URL" -o "$TAR_PATH"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -O "$TAR_PATH" "$PYTHON_TAR_URL"
+        else
+            echo "ERROR: Neither curl nor wget found. Cannot download standalone Python runtime."
+            exit 1
+        fi
+        
+        if [ $? -eq 0 ]; then
+            echo "Extracting standalone Python runtime..."
+            mkdir -p "$PORTABLE_PYTHON_DIR"
+            tar -xzf "$TAR_PATH" -C "$PORTABLE_PYTHON_DIR" --strip-components=1
+            rm "$TAR_PATH"
+            
+            if [ -f "$PORTABLE_PYTHON_BIN" ]; then
+                PYTHON_BIN="$PORTABLE_PYTHON_BIN"
+                echo "Standalone Python runtime installed successfully."
+            else
+                echo "ERROR: Extraction failed or python3 binary not found."
+                exit 1
+            fi
+        else
+            echo "ERROR: Failed to download standalone Python runtime."
+            exit 1
+        fi
     fi
     
     env -u LD_LIBRARY_PATH "$PYTHON_BIN" -m venv "$USER_VENV"

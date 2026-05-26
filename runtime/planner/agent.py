@@ -77,6 +77,7 @@ Response:
 TOOL RULES:
 - NEVER use tools not in the AVAILABLE TOOLS section (no brave_search, web_search, etc.)
 - For desktop tasks: open_app → wait_for_window → interact
+- If a window/app is already open but not in the foreground, use focus_window to bring it to the front before interacting
 - Use shell tool for terminal commands directly
 """
 
@@ -98,6 +99,8 @@ def _args_hint(tool) -> str:
         return "app: str"
     elif tool.name == "click_element":
         return "role: str, name: str"
+    elif tool.name == "focus_window":
+        return "title: str"
     elif tool.name == "shell":
         return "command: str"
     elif tool.name == "wait_for_window":

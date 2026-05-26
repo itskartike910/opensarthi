@@ -26,138 +26,190 @@ class AgentRuntime:
     async def run(self, goal: str, model, message_history: list) -> str:
         """
         Main entry point. Accepts a user goal and runs the full
-        plan → execute → verify loop.
+        observe → plan → execute → verify → retry loop.
         Returns the final response string.
         """
         self._cancel_requested = False
         self.state = AgentStateContext(current_goal=goal)
         self.last_usage = None
 
+        completed_actions = []
+        failed_actions = []
+        replanning_attempts = 0
+        max_replanning_attempts = 5
 
         try:
-            # 1. Take an initial observation of the desktop
-            await self._transition(AgentState.OBSERVING)
-            initial_observation = await self.observer.snapshot()
-
-            # 2. Plan
-            await self._transition(AgentState.PLANNING)
-            plan, text_response = await self._plan(goal, initial_observation, message_history, model)
-
-            if plan is None:
-                # Conversational response (no tool steps)
-                response = text_response or "I couldn't generate a plan or a response."
-                await self._transition(AgentState.COMPLETE)
-                return response
-
-            import uuid
-            plan_id = str(uuid.uuid4())
-            steps_data = []
-            for idx, s in enumerate(plan.steps):
-                steps_data.append({
-                    "index": idx,
-                    "tool": s.tool,
-                    "args": s.args or {},
-                    "description": s.description or s.tool,
-                    "status": "pending"
-                })
-
-            await self.ws.send_message("plan_created", {
-                "id": plan_id,
-                "goal": plan.goal or goal or "Executing Task",
-                "steps": steps_data,
-                "recovery_hint": plan.recovery_hint
-            })
-
-            self.state.total_steps = len(plan.steps)
-            await self._transition(AgentState.PLANNING)
-
-            # 3. Execute each step
-            for i, step in enumerate(plan.steps):
+            while replanning_attempts < max_replanning_attempts:
                 if self._cancel_requested:
-                    break
+                    await self._transition(AgentState.IDLE)
+                    return "Execution cancelled by user."
 
-                await self._transition(
-                    AgentState.EXECUTING,
-                    current_step_index=i,
-                    current_step_description=step.description,
-                    retry_count=0
+                # 1. Take an observation of the desktop
+                await self._transition(AgentState.OBSERVING)
+                snapshot = await self.observer.snapshot()
+
+                # 2. Plan/Decide the next actions
+                await self._transition(AgentState.PLANNING)
+                
+                # Build context with actual completed_actions and failed_actions
+                from planner.agent import build_structured_context
+                context = build_structured_context(
+                    goal=goal,
+                    snapshot=snapshot,
+                    history=message_history,
+                    current_step=len(completed_actions),
+                    total_steps=len(completed_actions) + 1,
+                    previous_actions=completed_actions,
+                    failed_actions=failed_actions,
+                    retry_count=replanning_attempts
                 )
 
-                # Reset retry count for this step
-                step_success = False
-                while self.state.retry_count <= self.state.max_retries:
+                # Call Agent
+                result = await self.agent.run(context, deps=self.deps, model=model, message_history=message_history)
+                self.last_usage = getattr(result, "usage", None)
+                
+                # Parse response
+                plan, text_response = self._parse_response(result.output)
+
+                if plan is None:
+                    # Conversational response (no tool steps), meaning the agent thinks it is done or cannot proceed.
+                    response = text_response or "I couldn't generate a plan or a response."
+                    await self._transition(AgentState.COMPLETE)
+                    return response
+
+                # Send plan creation details to client
+                import uuid
+                plan_id = str(uuid.uuid4())
+                steps_data = []
+                for idx, s in enumerate(plan.steps):
+                    steps_data.append({
+                        "index": idx,
+                        "tool": s.tool,
+                        "args": s.args or {},
+                        "description": s.description or s.tool,
+                        "status": "pending"
+                    })
+
+                await self.ws.send_message("plan_created", {
+                    "id": plan_id,
+                    "goal": plan.goal or goal or "Executing Task",
+                    "steps": steps_data,
+                    "recovery_hint": plan.recovery_hint
+                })
+
+                self.state.total_steps = len(plan.steps)
+                await self._transition(AgentState.PLANNING)
+
+                # 3. Execute each step in the generated plan
+                plan_failed = False
+                for i, step in enumerate(plan.steps):
                     if self._cancel_requested:
                         break
 
-                    result = await self._execute_step(step, i)
+                    await self._transition(
+                        AgentState.EXECUTING,
+                        current_step_index=i,
+                        current_step_description=step.description,
+                        retry_count=0
+                    )
 
-                    if result.success:
-                        # Verify post-condition if specified
-                        if step.verify_with:
-                            await self._transition(AgentState.OBSERVING)
-                            verified = await self._verify_postcondition(step.verify_with)
-                            if not verified:
-                                result = ToolResult.fail(
-                                    error=f"Post-condition verification failed: {step.verify_with}",
-                                    retryable=True
-                                )
+                    # Reset retry count for this step
+                    step_success = False
+                    self.state.retry_count = 0
+                    while self.state.retry_count <= self.state.max_retries:
+                        if self._cancel_requested:
+                            break
+
+                        result = await self._execute_step(step, i)
+
+                        if result.success:
+                            # Verify post-condition if specified
+                            if step.verify_with:
+                                await self._transition(AgentState.OBSERVING)
+                                verified = await self._verify_postcondition(step.verify_with)
+                                if not verified:
+                                    result = ToolResult.fail(
+                                        error=f"Post-condition verification failed: {step.verify_with}",
+                                        retryable=True
+                                    )
+                                else:
+                                    step_success = True
+                                    break
                             else:
                                 step_success = True
                                 break
-                        else:
-                            step_success = True
-                            break
 
-                    # Handle failure
-                    if not result.success:
-                        if result.retryable and self.state.retry_count < self.state.max_retries:
-                            self.state.retry_count += 1
-                            await self._transition(
-                                AgentState.RETRYING,
-                                current_step_description=f"Retrying: {step.description} ({self.state.retry_count}/{self.state.max_retries})"
-                            )
-                            await asyncio.sleep(1.5)  # Brief pause before retry
-                        else:
-                            await self._transition(
-                                AgentState.ERROR,
-                                error_message=f"Step {i} failed: {result.error}"
-                            )
-                            return f"❌ Failed at step {i}: {step.description}\nReason: {result.error}"
+                        # Handle failure
+                        if not result.success:
+                            if result.retryable and self.state.retry_count < self.state.max_retries:
+                                self.state.retry_count += 1
+                                await self._transition(
+                                    AgentState.RETRYING,
+                                    current_step_description=f"Retrying: {step.description} ({self.state.retry_count}/{self.state.max_retries})"
+                                )
+                                await asyncio.sleep(1.5)  # Brief pause before retry
+                            else:
+                                # Step failed permanently or max retries reached
+                                break
 
-                if not step_success:
+                    if step_success:
+                        completed_actions.append(step.description or f"Executed tool: {step.tool}")
+                        # Brief wait after step if specified
+                        if step.wait_after:
+                            await self._transition(AgentState.WAITING)
+                            await asyncio.sleep(step.wait_after)
+                    else:
+                        # Record failure and trigger replanning
+                        failed_actions.append(f"{step.description or step.tool} (Reason: {result.error})")
+                        plan_failed = True
+                        break
+
+                if plan_failed:
+                    replanning_attempts += 1
+                    # Increment retry/attempt count in the overall state context
+                    self.state.retry_count = replanning_attempts
                     await self._transition(
-                        AgentState.ERROR,
-                        error_message=f"Step {i} failed after max retries."
+                        AgentState.RETRYING,
+                        current_step_description="Replanning due to step failure..."
                     )
-                    return f"❌ Failed at step {i}: {step.description}\nReason: Max retries exceeded."
+                    await asyncio.sleep(1.5)
+                    continue  # Loop back to observe & replan
 
-                # Brief wait after step if specified
-                if step.wait_after:
-                    await self._transition(AgentState.WAITING)
-                    await asyncio.sleep(step.wait_after)
+                # If all steps in the current plan completed successfully, loop back to let the agent verify if the goal is met.
+                replanning_attempts += 1
+                self.state.retry_count = replanning_attempts
+                await self._transition(
+                    AgentState.RETRYING,
+                    current_step_description="Verifying task completion..."
+                )
+                await asyncio.sleep(1.0)
 
-                # Post-step observation
-                await self._transition(AgentState.OBSERVING)
-                post_obs = await self.observer.snapshot()
-
-            if self._cancel_requested:
-                await self._transition(AgentState.IDLE)
-                return "Execution cancelled by user."
-
-            # 4. Complete — generate a human-readable summary
-            await self._transition(AgentState.COMPLETE)
-            if plan.final_response:
-                return plan.final_response
+            # If we exceeded max replanning attempts, call AI one final time to explain the failure to the user!
+            await self._transition(AgentState.ERROR, error_message="Task failed after maximum replanning attempts.")
             
-            # Build a natural summary: "Done. I [goal steps]"
-            step_descriptions = [s.description for s in plan.steps if s.description]
-            goal_text = plan.goal or goal or ""
-            if step_descriptions:
-                summary_lines = "\n".join(f"✓ {d}" for d in step_descriptions)
-                # Use the original goal for the spoken part
-                spoken = f"Done. I've completed the task: {goal_text}" if goal_text else "Done. All steps completed successfully."
-                return f"{spoken}\n{summary_lines}"
-            return f"Done. {goal_text or 'Task completed.'}"
+            final_error_context = f"""OPENSARTHI TASK FAILURE SUMMARY
+════════════════════════════════════════════════
+The task has failed because the maximum number of replanning attempts was exceeded.
+
+GOAL:
+  {goal}
+
+COMPLETED ACTIONS:
+  {completed_actions}
+
+FAILED ACTIONS:
+  {failed_actions}
+════════════════════════════════════════════════
+Please explain to the user in a friendly, conversational manner why the task could not be completed and what went wrong. Do not output a JSON plan.
+"""
+            try:
+                result = await self.agent.run(final_error_context, deps=self.deps, model=model, message_history=message_history)
+                return result.output
+            except Exception:
+                return f"❌ Failed to complete the task.\n\nCompleted steps:\n" + \
+                       "\n".join(f"- {a}" for a in completed_actions) + \
+                       "\n\nFailed steps:\n" + \
+                       "\n".join(f"- {f}" for f in failed_actions)
 
         except asyncio.CancelledError:
             await self._transition(AgentState.IDLE)
@@ -259,6 +311,7 @@ class AgentRuntime:
                         "wait_for_window": ["title", "timeout"],
                         "wait_for_text":   ["text", "timeout"],
                         "click_element":   ["role", "name"],
+                        "focus_window":    ["title"],
                     }
                     
                     # Robust cleanup before pydantic validation

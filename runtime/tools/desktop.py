@@ -226,6 +226,58 @@ class OpenAppTool(BaseTool):
         )
 
 
+class FocusWindowTool(BaseTool):
+    name = "focus_window"
+    description = "Focus/bring a window to the foreground by its title. Args: title (string)"
+    risk_level = RiskLevel.MODERATE
+
+    async def execute(self, args: dict) -> ToolResult:
+        title = args.get("title", "").strip()
+        if not title:
+            return ToolResult.fail("No window title provided", retryable=False)
+
+        # 1. Try wmctrl -a
+        if shutil.which("wmctrl"):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "wmctrl", "-a", title,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await proc.communicate()
+                if proc.returncode == 0:
+                    return ToolResult.ok(observation=f"Focused window matching title '{title}' using wmctrl")
+            except Exception:
+                pass
+
+        # 2. Try xdotool windowactivate
+        if shutil.which("xdotool"):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "xdotool", "search", "--onlyvisible", "--name", title,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await proc.communicate()
+                window_ids = stdout.decode().strip().split()
+                if window_ids:
+                    proc = await asyncio.create_subprocess_exec(
+                        "xdotool", "windowactivate", window_ids[0],
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await proc.communicate()
+                    if proc.returncode == 0:
+                        return ToolResult.ok(observation=f"Focused window matching title '{title}' using xdotool")
+            except Exception as e:
+                return ToolResult.fail(f"Failed to focus window: {e}", retryable=True)
+
+        return ToolResult.fail(
+            f"Could not focus window with title '{title}'. Make sure the window is open and wmctrl/xdotool is installed.",
+            retryable=True
+        )
+
+
 class ClickElementTool(BaseTool):
     name = "click_element"
     description = (
