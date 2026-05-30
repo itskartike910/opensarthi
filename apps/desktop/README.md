@@ -1,6 +1,6 @@
 # OpenSarthi — Desktop Frontend
 
-The Tauri v2 + React 19 desktop shell for OpenSarthi. Provides the UI, theming, voice controls, settings management, and real-time WebSocket connection to the Python AI runtime.
+The Tauri v2 + React 19 desktop shell for OpenSarthi. Provides the HUD, theming, voice controls, onboarding, settings, chat history, JSON task import, and a real-time WebSocket connection to the Python AI runtime.
 
 ---
 
@@ -11,82 +11,249 @@ The Tauri v2 + React 19 desktop shell for OpenSarthi. Provides the UI, theming, 
 | **Desktop Framework** | Tauri v2 |
 | **UI Framework** | React 19 + TypeScript |
 | **Bundler** | Vite 6 |
-| **Styling** | Vanilla CSS with custom design tokens |
+| **Animation** | Framer Motion |
 | **State Management** | Zustand |
-| **WebSocket** | Native browser WebSocket with reconnect logic |
+| **Styling** | Vanilla CSS with custom design tokens |
 | **Icons** | Lucide React |
+| **WebSocket** | Native browser WebSocket with reconnect logic |
 
 ---
 
-## 🎨 UI Design
-
-### Cyberpunk HUD Layout
-
-The main window uses a three-panel grid layout:
+## 🗂️ Component Tree
 
 ```
-┌────────────────┬──────────────────────────┬────────────────┐
-│  ACTIVE TASKS  │    CHAT / MAIN VIEW      │  LIVE PLAN &   │
-│                │                          │    ACTIVITY    │
-│  (scrollable)  │  messages + voice input  │  (scrollable)  │
-├────────────────┴──────────────────────────┴────────────────┤
-│  AGENT STATUS & SYSTEMS │ SYSTEM BUILD / VERSION INFO      │
-│  Provider, Model, Tokens│ Online status, time              │
-└──────────────────────────────────────────────────────────────┘
+App.tsx  (Root — owns modal state: settings, history, customizer)
+│
+├── OnboardingView           (cold-start wizard OR edit-mode popup)
+├── AssistantOverlay         (main HUD — always visible)
+│   ├── ParticleBackground   (animated canvas layer)
+│   ├── TaskList             (left panel — agentic task cards + JSON import)
+│   ├── MessageList          (centre panel — chat bubbles + markdown)
+│   ├── ActionLog            (right panel — live tool call log + token stats)
+│   ├── VoiceButton          (mic toggle with animated waveform)
+│   └── TranscriptView       (live STT transcript overlay)
+├── PermissionDialog         (tool permission approval popup)
+├── InputDialog              (user input request popup)
+├── SettingsView             (provider → model → API key cascading flow)
+└── HistoryView              (past threads list with token usage restore)
 ```
-
-### 5 Premium Themes
-
-| Theme | Style |
-|-------|-------|
-| **Glass Red-Black** | Default — high-tech cyberpunk red |
-| **Forest Green-Black** | Cyberpunk green terminal |
-| **Deep Purple-Black** | Midnight tech purple |
-| **Cyber Sky-White** | Modern minimalist light |
-| **Sakura Pink-White** | Warm soft light |
 
 ---
 
-## ✅ Completed Features
+## 🖥️ HUD Layout
 
-### AssistantOverlay (`components/assistant/AssistantOverlay.tsx`)
-
-The main UI component. Key capabilities:
-
-- **Real-time token counter** — `TOKEN USAGE` (current request) and `SESSION TOTAL` (cumulative), displayed in the bottom-left HUD panel. Resets on New Chat.
-- **Provider & model display** — shows the active provider and selected cloud/local model
-- **New Chat** — clears conversation history (calls `new_chat` WebSocket event), resets token counter
-- **Chat history** — renders assistant markdown responses and user messages
-- **Voice input** — animated microphone button with waveform pulse and state transitions (idle → listening → processing)
-
-### Settings (`components/settings/SettingsView.tsx`)
-
-Cascading three-step settings flow:
+The main window uses a three-panel grid with draggable resize handles:
 
 ```
-1. Select AI Provider   →   2. Select / Enter Model   →   3. API Key   →   Save
+┌────────────────┬───────────────────────────┬────────────────┐
+│  AGENT TASKS   │    CHAT / MAIN VIEW       │  LIVE PLAN &   │
+│                │                           │    ACTIVITY    │
+│  Task cards    │  Messages + voice input   │  Tool log +    │
+│  + JSON import │  + transcript overlay     │  token stats   │
+├────────────────┴───────────────────────────┴────────────────┤
+│  Provider · Model · Token Usage · Session Total · Version   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Supported providers and their model lists:
+| Panel | Default Width | Content |
+|-------|--------------|---------|
+| Left | 260px | `TaskList` — agentic task cards + `+` JSON import button |
+| Centre | flex-1 | Chat messages + `VoiceButton` + transcript overlay |
+| Right | 240px | `ActionLog` — live tool call log + cumulative token stats |
+
+---
+
+## 🎯 Onboarding & Personalisation (`OnboardingView.tsx`)
+
+### Cold-Start Mode
+
+Shown full-screen on first launch (when `onboardingCompleted` is `false` in `localStorage`).
+
+- **Step 1 — Skills:** 12 skill category toggles + "Select All" shortcut
+- **Step 2 — Persona:** Name input + custom instructions textarea (500 char limit)
+- **Skip button:** Applies all defaults (all skills, no name, empty prompt)
+- On complete → `App.tsx` calls `setPersonalization()` + sends `update_settings` to backend
+
+**12 Skill Categories:**
+
+| ID | Label |
+|----|-------|
+| `general` | General Assistant |
+| `desktop_automation` | Desktop Automation |
+| `developer` | Developer & Coding |
+| `system_admin` | System Admin |
+| `media` | Media & Music |
+| `writing` | Writing & Content |
+| `research` | Research & Analysis |
+| `web` | Web & Browser |
+| `files` | Files & Data |
+| `privacy` | Privacy Mode |
+| `home_user` | Home User |
+| `gaming` | Gaming & Fun |
+
+### Edit / Customise Mode
+
+Opened via the **Wrench (Customise) button** in the top-right HUD bar. Renders as a **glassmorphic modal popup** over the active app — the main UI stays visible behind it:
+
+- Pre-populates all fields from current store values
+- Unified single-view layout: Profile & Instructions section + Agent Capabilities grid
+- `X` close button (top-right) + CANCEL / SAVE CHANGES footer
+- On save: updates store + syncs to backend via `update_settings` WebSocket message
+
+---
+
+## 🔝 Top-Right Control Buttons
+
+Four control buttons are displayed in the HUD top bar. When the window is **maximized**, each button expands to show a text label alongside the icon:
+
+| Button | Icon | Label (maximized) | Action |
+|--------|------|------------------|--------|
+| Customise | Wrench | "Customise" | Opens persona/skill edit modal |
+| Past Threads | History | "Past Threads" | Opens `HistoryView` |
+| New Thread | MessageSquarePlus | "New Thread" | Clears session + resets tokens |
+| Settings | Settings (cog) | "Settings" | Opens `SettingsView` |
+
+Maximization is detected via Tauri's `getCurrentWindow().onResized()` listener and stored in `isMaximized` React state.
+
+---
+
+## 📋 JSON Task Import (`TaskList.tsx`)
+
+The `+` button in the Agent Tasks panel header opens a JSON import modal:
+
+1. Paste a raw JSON step array
+2. Live syntax validation — green/red border feedback with error line display
+3. Step preview list — shows `tool` name + `description` for each step
+4. **RUN NOW** sends `run_json_plan` via WebSocket → backend executes immediately, zero LLM tokens used
+
+**Step format:**
+```json
+[
+  { "tool": "open_app", "args": { "app": "firefox" }, "description": "Launch Firefox" },
+  { "tool": "wait_for_window", "args": { "title": "Firefox", "timeout": 10 }, "description": "Wait for Firefox" }
+]
+```
+
+---
+
+## ⚙️ Settings (`SettingsView.tsx`)
+
+Cascading three-step flow:
+
+```
+1. Select Provider  →  2. Select / Enter Model  →  3. Enter API Key  →  Save
+```
 
 | Provider | Example Models |
 |----------|---------------|
-| Groq | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
 | Google | `gemini-2.5-flash`, `gemini-2.0-flash` |
 | OpenAI | `gpt-4o`, `gpt-4o-mini` |
 | Anthropic | `claude-opus-4-5`, `claude-sonnet-4-5` |
-| OpenRouter | Custom text input |
-| Ollama | Custom text input (local) |
+| Groq | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| OpenRouter | Free-form text input |
+| Ollama | Free-form text input (local) |
 
-- Saving with an empty key retains the previously saved key (no accidental wipe)
-- Keys stored individually per provider in `~/.config/opensarthi/.env`
+- Saving with an empty API key retains the previously saved key (no accidental wipe)
+- All keys stored in `~/.config/opensarthi/.env` on the backend
 
-### WebSocket Hook (`hooks/useWebSocket.ts`)
+---
 
-- Auto-connects to the Python runtime on the dynamically negotiated port
-- Handles `assistant_response`, `error`, `plan_step`, `task_update` message types
-- Extracts `usage.request_tokens`, `usage.response_tokens`, `usage.total_tokens` from each response
-- Auto-reconnects with exponential backoff on disconnect
+## 🗄️ Zustand Store (`assistantStore.ts`)
+
+Single Zustand store. `onboardingCompleted` is also persisted to `localStorage`.
+
+### Key State
+
+```typescript
+// Voice & Connection
+voiceState: 'idle' | 'listening' | 'processing' | 'speaking' | 'error'
+isConnected: boolean
+currentTranscript: string | null
+
+// Chat & Plans
+messages: Message[]
+threads: Thread[]
+currentPlan: Plan | null   // {id, goal, steps[], recovery_hint}
+taskPaused: boolean
+
+// LLM Config
+activeProvider: string
+activeLocalModel: string
+activeCloudModel: string
+// ...API keys per provider
+
+// Token Tracking
+tokenUsage: {
+  requestTokens / responseTokens / totalTokens       // current thread
+  sessionRequestTokens / sessionResponseTokens / sessionTotalTokens  // session
+}
+
+// Personalization
+userName: string
+userSkills: string[]
+customPrompt: string
+onboardingCompleted: boolean
+```
+
+### Key Actions
+
+| Action | Effect |
+|--------|--------|
+| `setPersonalization(name, skills, prompt)` | Updates personalization fields |
+| `setOnboardingCompleted(bool)` | Shows/hides onboarding screen |
+| `addMessage(msg)` | Appends to messages array |
+| `setPlan(plan)` | Sets current agentic plan |
+| `updateTokenUsage(usage)` | Accumulates token counts |
+| `restoreThreadTokens(usage)` | Restores per-thread tokens on history load |
+| `resetSessionTokens()` | Clears session counters on new thread |
+
+---
+
+## 🔌 WebSocket Hook (`useWebSocket.ts`)
+
+Auto-connects to the Python runtime on the dynamically negotiated port. Routes all incoming messages to store actions.
+
+| Message Type | Action |
+|-------------|--------|
+| `assistant_response` | Appends message, calls `updateTokenUsage` |
+| `plan_created` | Calls `setPlan` |
+| `tool_started` / `tool_completed` / `tool_error` | Updates step status in plan |
+| `tool_action` | Appends to ActionLog |
+| `tool_terminated` | Marks step as terminated |
+| `voice_state` | Sets `voiceState` |
+| `session_state` | Sets `isConnected` |
+| `settings_sync` | Syncs all provider/model/key/personalization fields |
+| `history_response` | Populates `threads` list |
+| `thread_loaded` | Restores messages + calls `restoreThreadTokens` |
+| `task_paused` / `task_resumed` | Sets `taskPaused` flag |
+
+---
+
+## 🎨 Theme System
+
+5 themes defined in `styles/themes.css` as CSS custom property sets, applied to `document.body.className`:
+
+| Theme ID | Palette |
+|---------|---------|
+| `glass-red-black` | Red accent, dark glass |
+| `forest-green-black` | Green accent, dark glass |
+| `deep-purple-black` | Purple accent (default), dark glass |
+| `cyber-sky-white` | Cyan accent, light mode |
+| `sakura-pink-white` | Pink accent, light mode |
+
+Key CSS variables across all themes:
+
+```css
+--accent            /* main accent color */
+--accent-glow       /* rgba glow version of accent */
+--bg-primary        /* window background */
+--bg-secondary      /* panel backgrounds */
+--text-primary      /* main text */
+--text-secondary    /* muted/label text */
+--border            /* panel borders */
+--font-mono         /* monospace font for HUD labels */
+--font-sans         /* sans-serif for UI text */
+```
 
 ---
 
@@ -95,35 +262,53 @@ Supported providers and their model lists:
 ```
 apps/desktop/
 ├── src/
-│   ├── main.tsx                     # Vite entry point
-│   ├── App.tsx                      # Root component, router, theme provider
+│   ├── main.tsx                        # Vite entry point
+│   ├── App.tsx                         # Root: modal state, onboarding gate
 │   ├── components/
 │   │   ├── assistant/
-│   │   │   ├── AssistantOverlay.tsx # Main HUD (3-panel layout + token display)
-│   │   │   └── TaskList.tsx         # Active task list (left panel)
-│   │   ├── execution/               # Plan step viewer (right panel)
-│   │   ├── permissions/             # Permission confirmation dialogs
+│   │   │   ├── AssistantOverlay.tsx    # Main HUD (3-panel + controls)
+│   │   │   ├── TaskList.tsx            # Task panel + JSON import modal
+│   │   │   ├── VoiceButton.tsx         # Mic toggle + waveform
+│   │   │   ├── Waveform.tsx            # Audio visualizer
+│   │   │   ├── ParticleBackground.tsx  # Animated canvas
+│   │   │   └── TranscriptView.tsx      # Live STT overlay
+│   │   ├── onboarding/
+│   │   │   └── OnboardingView.tsx      # Cold-start wizard + edit modal
+│   │   ├── execution/
+│   │   │   └── ActionLog.tsx           # Live tool call log (right panel)
+│   │   ├── permissions/
+│   │   │   ├── PermissionDialog.tsx    # Tool approval popups
+│   │   │   └── InputDialog.tsx         # Agent input request popup
 │   │   └── settings/
-│   │       └── SettingsView.tsx     # Provider → Model → Key settings UI
+│   │       ├── SettingsView.tsx        # Provider → Model → Key settings
+│   │       └── HistoryView.tsx         # Thread list + token restore
 │   ├── hooks/
-│   │   └── useWebSocket.ts          # WebSocket connection + message handler
-│   ├── stores/                      # Zustand state (assistant, audio, execution)
-│   └── styles/                      # Global CSS, theme tokens, animations
+│   │   ├── useWebSocket.ts             # WS connection + message routing
+│   │   └── useTauriEvent.ts            # Tauri IPC event listener
+│   ├── stores/
+│   │   └── assistantStore.ts           # Zustand: all app state
+│   ├── lib/
+│   │   ├── ws.ts                       # WS client singleton (wsClient)
+│   │   ├── schemas.ts                  # Zod: WSMessageTypeSchema
+│   │   └── constants.ts                # TAURI_EVENTS, etc.
+│   └── styles/
+│       ├── globals.css                 # Base styles, resets
+│       └── themes.css                  # 5 theme token sets
 │
 ├── src-tauri/
 │   ├── src/
-│   │   ├── lib.rs                   # App bootstrap, sidecar launch
-│   │   ├── sidecar.rs               # Python process spawn + port read
-│   │   ├── tray.rs                  # System tray icon and menu
-│   │   └── ipc.rs                   # Tauri IPC command handlers
+│   │   ├── lib.rs                      # App entry, window setup, sidecar launch
+│   │   ├── sidecar.rs                  # Python process spawn, PORT: reader
+│   │   ├── tray.rs                     # System tray icon + menu
+│   │   └── ipc.rs                      # Tauri invoke command handlers
 │   ├── binaries/
-│   │   └── opensarthi-runtime-x86_64-unknown-linux-gnu   # Bash bootstrap script
+│   │   └── opensarthi-runtime-x86_64-unknown-linux-gnu  # Bootstrap script
 │   ├── resources/
-│   │   └── uv                       # Bundled uv binary (57MB, portable Python)
+│   │   └── uv                          # Bundled uv binary (portable Python manager)
 │   ├── mock_pkg_config/
-│   │   └── pkgconf                  # gdk-pixbuf path override for AppImage builds
-│   ├── capabilities/                # Tauri v2 permission scoping
-│   └── tauri.conf.json              # Window config, resource bundling, AppImage target
+│   │   └── pkgconf                     # gdk-pixbuf path override for AppImage
+│   ├── capabilities/                   # Tauri v2 permission scoping
+│   └── tauri.conf.json
 │
 ├── package.json
 ├── vite.config.ts
@@ -136,10 +321,19 @@ apps/desktop/
 
 | File | Responsibility |
 |------|---------------|
-| `lib.rs` | App entry — sets up window, tray, spawns sidecar |
-| `sidecar.rs` | Spawns the bootstrap script, reads `PORT:xxxx` from stdout, forwards to frontend |
-| `tray.rs` | System tray icon, right-click menu (Show/Hide/Quit) |
-| `ipc.rs` | Tauri `invoke` command handlers (port forwarding, etc.) |
+| `lib.rs` | App bootstrap, window setup, sidecar spawn, system tray init |
+| `sidecar.rs` | Spawn bootstrap script, read `PORT:xxxx` from stdout, relay stderr as logs |
+| `tray.rs` | System tray icon, right-click menu (Show/Hide, Quit) |
+| `ipc.rs` | `invoke()` commands exposed to frontend |
+
+### Sidecar Bootstrap Flow
+
+The bundled `opensarthi-runtime-x86_64-unknown-linux-gnu` script runs on launch:
+
+1. Check for venv Python at `~/.config/opensarthi/.venv/bin/python3`
+2. If missing: use bundled `uv` to install Python 3.12 and create venv
+3. Validate key imports (`uvicorn`, `fastapi`, `speech_recognition`)
+4. Run `python main.py` → prints `PORT:<n>` → Tauri reads it → frontend connects
 
 ---
 
@@ -152,38 +346,47 @@ apps/desktop/
 pnpm dev
 ```
 
-This starts Vite HMR, compiles the Rust debug binary, spawns the Python sidecar, and opens the window.
+Starts Vite HMR + Rust debug binary + Python sidecar and opens the window.
 
 ### Production AppImage
 
 ```bash
-# From the repo root
 PATH="$(pwd)/apps/desktop/src-tauri/mock_pkg_config:$PATH" \
 NO_STRIP=true \
 APPIMAGE_EXTRACT_AND_RUN=1 \
 pnpm tauri build -b appimage
 ```
 
-> **Why mock_pkg_config?**  
-> The `linuxdeploy-plugin-gtk.sh` uses `pkg-config --variable=gdk_pixbuf_binarydir` to locate GTK loader directories. On Arch/Garuda Linux this returns a path that doesn't exist in the expected linuxdeploy format. The `mock_pkg_config/pkgconf` wrapper intercepts these specific queries, creates the expected directories in `/tmp/mock_usr/`, and passes all other queries through to the real `pkgconf`.
+Output: `src-tauri/target/release/bundle/appimage/OpenSarthi_0.1.0_amd64.AppImage`
 
-> **Why APPIMAGE_EXTRACT_AND_RUN?**  
-> The `linuxdeploy` AppImage itself requires FUSE to mount. This flag tells it to extract and run instead, bypassing the FUSE requirement (which may not be available in build environments).
+> **Why `mock_pkg_config`?** The linuxdeploy GTK plugin runs `pkg-config --variable=gdk_pixbuf_binarydir` which returns an incorrect path on Arch Linux. The mock wrapper creates the expected directories and falls through to real `pkgconf` for all other queries.
+
+> **Why `APPIMAGE_EXTRACT_AND_RUN`?** `linuxdeploy` itself is an AppImage needing FUSE to mount. This flag extracts and runs it directly, bypassing the FUSE requirement.
 
 ---
 
-## 🎨 Theme System
+## 🔢 Versioning
 
-Themes are CSS custom property sets applied to `:root`. Each theme defines:
+Version must be kept in sync across three files:
 
-```css
---primary-color        /* main accent (e.g. #ff1744 for red) */
---primary-glow         /* rgba glow version */
---bg-primary           /* main background */
---bg-secondary         /* panel backgrounds */
---bg-tertiary          /* elevated surfaces */
---text-primary         /* main text */
---text-secondary       /* muted/secondary text */
---border-color         /* panel borders */
---font-mono            /* monospace font for HUD labels */
+| File | Field |
+|------|-------|
+| `apps/desktop/package.json` | `"version": "0.1.0"` |
+| `apps/desktop/src-tauri/tauri.conf.json` | `"version": "0.1.0"` |
+| `apps/desktop/src-tauri/Cargo.toml` | `version = "0.1.0"` |
+
+The HUD footer reads `package.json` at compile time:
+```typescript
+import pkg from "../../../package.json";
+// displays: OPENSARTHI v0.1.0
 ```
+
+---
+
+## 📚 See Also
+
+- [`../../README.md`](../../README.md) — Monorepo overview, setup, architecture
+- [`../../runtime/README.md`](../../runtime/README.md) — Python sidecar internals
+- [`../../docs/01_frontend_and_desktop_shell.md`](../../docs/01_frontend_and_desktop_shell.md) — Deep-dive: components, store, WS handlers
+- [`../../docs/03_agentic_flow.md`](../../docs/03_agentic_flow.md) — Agentic execution flowcharts
+- [`../../docs/04_websocket_protocol.md`](../../docs/04_websocket_protocol.md) — Full WS message type reference

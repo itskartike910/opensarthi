@@ -1,37 +1,37 @@
 # OpenSarthi
 
-> **An AI-native Desktop Operating Layer & Assistant for Linux**
+> **An AI-native Desktop Agent & Assistant for Desktop**
 
-OpenSarthi is an autonomous, voice-first AI desktop agent built for Linux. It acts as a generalized computer-use primitive — executing system-level tasks, controlling apps, interacting with the screen, sandboxing shell commands, and responding to natural voice input. It is not just a chatbot; it is a full agentic runtime integrated directly into your desktop.
+OpenSarthi is an autonomous, voice-first AI desktop agent built for Desktop. It acts as a generalized computer-use primitive — executing system-level tasks, controlling apps, interacting with the screen, sandboxing shell commands, and responding to natural voice input. It is not just a chatbot; it is a full agentic runtime integrated directly into your desktop.
 
 ---
 
 ## 🏗️ Architecture Overview
 
-OpenSarthi is a monorepo with two tightly integrated layers:
+OpenSarthi is a monorepo with two tightly coupled layers that communicate over a local WebSocket connection:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │               Tauri v2 Desktop Shell                    │
 │        React 19 + TypeScript + Vite 6 (WebView)        │
-│  Themes • HUD • Voice Button • Settings • Chat Panel   │
+│  Themes · HUD · Voice · Chat · Tasks · Onboarding      │
 └────────────────────────┬────────────────────────────────┘
-                         │  WebSocket (localhost)
+                         │  WebSocket (localhost, dynamic port)
 ┌────────────────────────▼────────────────────────────────┐
 │              Python Runtime Sidecar                     │
 │          FastAPI + PydanticAI + uvicorn                 │
-│  Agent • Planner • Tools • Voice • Memory • Providers  │
+│  Agent · Planner · Tools · Voice · Memory · Providers  │
 └─────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Technology |
 |-------|-----------|
 | **Desktop Shell** | Tauri v2, React 19, TypeScript, Vite 6 |
-| **Rust Core** | sidecar.rs, tray.rs, ipc.rs (Tauri shell plugin) |
+| **Rust Core** | sidecar.rs, tray.rs, ipc.rs |
 | **AI Runtime** | Python 3.12, FastAPI, PydanticAI ≥ 0.2 |
-| **LLM Providers** | Groq, Google Gemini, OpenAI, Anthropic, OpenRouter, Ollama |
-| **Voice Pipeline** | SpeechRecognition, OpenWakeWord, faster-whisper, Kokoro TTS |
-| **Storage** | SQLite (aiosqlite) + LanceDB (vector memory) |
+| **LLM Providers** | Google Gemini, OpenAI, Anthropic, Groq, OpenRouter, Ollama |
+| **Voice Pipeline** | SpeechRecognition + Google STT, OpenWakeWord, faster-whisper (Whisper), Kokoro TTS |
+| **Storage** | SQLite (aiosqlite) for chat history + token tracking |
 | **Packaging** | AppImage (Tauri bundle) + `uv` for portable Python management |
 
 ---
@@ -39,29 +39,35 @@ OpenSarthi is a monorepo with two tightly integrated layers:
 ## ✅ What's Built & Working
 
 ### Desktop Shell (Frontend)
-- **Cyberpunk HUD UI** — three-panel layout: Active Tasks (left), Chat (center), Live Plan & Activity (right)
+
+- **Cyberpunk HUD UI** — three-panel layout: Agent Tasks (left), Chat (center), Live Plan & Activity (right)
 - **5 Premium Themes** — Glass Red-Black, Forest Green-Black, Deep Purple-Black, Cyber Sky-White, Sakura Pink-White
-- **Real-time Token Counter** — live `request_tokens / response_tokens / session_total` display in bottom-left HUD
-- **Provider & Model Settings** — cascading flow: Provider → Model → API Key → Save
-- **Scrollable Task & Plan Panels** — both side panels scroll independently
-- **New Chat** — clears session context and resets token counter
+- **Real-time Token Counter** — live `request / response / session total` tokens per thread, restored on history load
+- **First-Launch Onboarding** — skill-aware cold-start wizard (12 skill categories, custom name, custom instructions)
+- **Customise Popup** — re-editable persona & skills via Wrench button; opens modal without leaving the main UI
+- **JSON Task Import** — paste a raw JSON step plan in the Agent Tasks panel; runs immediately without LLM planning
+- **Provider & Model Settings** — cascading: Provider → Model → API Key → Save
+- **Multi-thread Chat History** — persistent threads; each thread restores its own token usage on load
+- **New Thread** — clears session context and resets token counter
 - **Voice Button** — microphone toggle with animated waveform and state indicators
+- **Window-Aware Controls** — top-right buttons expand with labels when window is maximized
 
 ### AI Runtime (Backend Sidecar)
-- **Multi-Provider Support** — Groq, OpenAI, Anthropic, Google Gemini, OpenRouter, Ollama (local)
-- **Context-Aware Conversations** — SQLite-persisted message history with a 20-message sliding window
-- **Groq Tool-Hallucination Fix** — system prompt explicitly forbids undeclared tool calls (eliminates `brave_search` 400 errors)
-- **Cloud → Local Fallback** — if cloud model fails (tool validation error, rate limit), a clean no-tools Ollama agent takes over
-- **Production-Safe Config** — settings at `~/.config/opensarthi/.env`, database at `~/.config/opensarthi/opensarthi.db`
-- **Token Usage Extraction** — `result.usage` (property, not method) returned on every WebSocket response
-- **Voice Pipeline** — SpeechRecognition + echo protection + 8-second silence timeout
 
-### AppImage Distribution
-- **Portable Bootstrap Script** — `opensarthi-runtime-x86_64-unknown-linux-gnu` auto-creates venv, validates packages
-- **Bundled `uv` Binary** — embedded in AppImage resources; downloads Python 3.12 automatically if not present
-- **LD_LIBRARY_PATH Isolation** — clears `LD_LIBRARY_PATH`, `LD_PRELOAD`, `PYTHONHOME` before spawning system Python
-- **Stale Venv Detection** — validates `import uvicorn, fastapi, speech_recognition` before reusing cached venv
-- **linuxdeploy GTK Plugin Fix** — mock_pkg_config auto-creates dummy gdk-pixbuf directories to prevent `cp` failures during AppImage bundling
+- **Multi-Provider LLM** — Gemini, GPT-4o, Claude, Groq, OpenRouter, Ollama (local)
+- **Skill-Aware Dynamic Prompts** — system prompt is built at runtime from user-selected skills; disables tool-call format entirely when desktop automation is not selected (reduces token cost)
+- **Immediate Stop/Pause** — `request_cancel()` cancels in-flight LLM inference and tool execution via `asyncio.Task.cancel()` — no waiting for completion
+- **JSON Plan Execution** — `run_plan_directly()` bypasses LLM planning, runs a validated step array immediately
+- **Context-Aware Conversations** — SQLite-persisted message history with a 20-message sliding window
+- **Token Usage per Thread** — stored per thread_id; frontend restores on history load
+- **Voice Pipeline** — dual STT: Google SpeechRecognition + local Whisper; wake word detection via OpenWakeWord; Kokoro TTS output
+- **Production-Safe Config** — settings at `~/.config/opensarthi/.env`, database at `~/.config/opensarthi/opensarthi.db`
+
+### AppImage Distribution (Linux)
+
+- **Portable Bootstrap** — auto-creates venv, downloads Python 3.12 via bundled `uv` if not present
+- **Stale Venv Detection** — validates core imports before reusing cached venv
+- **Config Isolation** — all user data lives in `~/.config/opensarthi/` (never in read-only AppImage mount)
 
 ---
 
@@ -77,7 +83,7 @@ pnpm tauri build -b appimage
 
 Output: `apps/desktop/src-tauri/target/release/bundle/appimage/OpenSarthi_0.1.0_amd64.AppImage`
 
-> **Note:** The `mock_pkg_config` override is needed because the linuxdeploy GTK plugin uses `pkg-config --variable=gdk_pixbuf_binarydir` which otherwise returns incorrect paths on Arch Linux. The mock wrapper creates the required directories and falls through to the real `pkgconf` for all other queries.
+> **Note:** The `mock_pkg_config` override is needed because the linuxdeploy GTK plugin uses `pkg-config --variable=gdk_pixbuf_binarydir` which returns incorrect paths on Arch Linux.
 
 ---
 
@@ -119,49 +125,64 @@ pnpm dev
 opensarthi/
 ├── apps/
 │   └── desktop/                     # Tauri v2 + React 19 frontend
-│       ├── src/                     # React/TypeScript source
-│       │   ├── App.tsx
+│       ├── src/
+│       │   ├── App.tsx              # Root: onboarding gate + modal state
 │       │   ├── components/
-│       │   │   ├── assistant/       # AssistantOverlay, TaskList
-│       │   │   ├── execution/       # Execution plan panels
-│       │   │   ├── permissions/     # Permission dialog
-│       │   │   └── settings/        # SettingsView (provider → model → key)
+│       │   │   ├── assistant/       # AssistantOverlay, TaskList (+ JSON import)
+│       │   │   ├── onboarding/      # OnboardingView (cold-start + edit mode)
+│       │   │   ├── execution/       # ActionLog
+│       │   │   ├── permissions/     # PermissionDialog, InputDialog
+│       │   │   └── settings/        # SettingsView, HistoryView
 │       │   ├── hooks/
-│       │   │   └── useWebSocket.ts  # WebSocket client with reconnect
-│       │   ├── stores/              # Zustand state stores
-│       │   └── styles/              # Global CSS + theme tokens
+│       │   │   ├── useWebSocket.ts  # WS client, message routing, settings sync
+│       │   │   └── useTauriEvent.ts # Tauri IPC events
+│       │   ├── stores/
+│       │   │   └── assistantStore.ts # Zustand: messages, tokens, personalization
+│       │   └── styles/              # Global CSS + 5 theme token sets
 │       └── src-tauri/
 │           ├── src/
 │           │   ├── lib.rs           # App entry, sidecar launch
-│           │   ├── sidecar.rs       # Python process management
+│           │   ├── sidecar.rs       # Python process management & port detection
 │           │   ├── tray.rs          # System tray
 │           │   └── ipc.rs           # Tauri IPC commands
 │           ├── binaries/
-│           │   └── opensarthi-runtime-x86_64-unknown-linux-gnu  # Bootstrap script
-│           ├── resources/
-│           │   └── uv               # Bundled uv binary (portable Python manager)
-│           ├── mock_pkg_config/
-│           │   └── pkgconf          # gdk-pixbuf override for linuxdeploy
-│           └── tauri.conf.json
+│           │   └── opensarthi-runtime-x86_64-unknown-linux-gnu  # Bootstrap
+│           └── resources/
+│               └── uv               # Bundled uv binary
 │
 ├── runtime/                         # Python AI sidecar
 │   ├── main.py                      # FastAPI app + port negotiation
-│   ├── config.py                    # pydantic-settings (reads ~/.config/opensarthi/.env)
-│   ├── db.py                        # SQLite conversation history
-│   ├── requirements.txt
+│   ├── config.py                    # pydantic-settings (user_name, skills, etc.)
+│   ├── db.py                        # SQLite: messages + thread token storage
+│   ├── agent_runtime.py             # Stateful executor: cancel/pause/run/plan
+│   ├── observation.py               # Desktop snapshot (screenshot + window info)
+│   ├── state_machine.py             # AgentState enum + context
+│   ├── sync_primitives.py           # Async helpers
 │   ├── api/
-│   │   └── websocket.py             # WebSocket router, agent execution, token tracking
+│   │   └── websocket.py             # WS router, all message handlers
 │   ├── planner/
-│   │   └── agent.py                 # PydanticAI agent + system prompt
-│   ├── tools/                       # Desktop automation tools
+│   │   ├── agent.py                 # PydanticAI agent + dynamic skill prompt
+│   │   └── schemas.py               # Plan, PlanStep, ToolResult pydantic models
+│   ├── tools/
+│   │   ├── desktop.py               # click, type, open_app, screenshot, etc.
+│   │   ├── system.py                # shell (bubblewrap sandboxed)
+│   │   ├── wait_tools.py            # wait_for_window, wait_for_text
+│   │   └── registry.py              # Tool registry
 │   ├── providers/                   # X11/Wayland desktop providers
 │   ├── voice/
-│   │   └── pipeline.py              # SpeechRecognition + echo protection
-│   ├── memory/                      # LanceDB vector store
-│   ├── observer/                    # Screenshot + OCR pipeline
-│   ├── security/                    # bubblewrap sandboxing
-│   ├── llm/                         # LLM provider wrappers
-│   └── mcp/                         # Model Context Protocol server/client
+│   │   ├── stt.py                   # Dual STT: Google + Whisper
+│   │   └── pipeline.py              # Wake word, VAD, echo protection
+│   ├── memory/                      # LanceDB vector store (stub)
+│   ├── observer/                    # Screenshot + OCR pipeline (stub)
+│   ├── security/                    # bubblewrap sandboxing (stub)
+│   ├── llm/                         # LLM provider wrappers (stub)
+│   └── mcp/                         # Model Context Protocol stubs
+│
+├── docs/                            # Technical documentation
+│   ├── 01_frontend_and_desktop_shell.md
+│   ├── 02_backend_runtime_and_infra.md
+│   ├── 03_agentic_flow.md
+│   └── 04_websocket_protocol.md
 │
 ├── package.json                     # pnpm workspace root
 ├── pnpm-workspace.yaml
@@ -170,15 +191,39 @@ opensarthi/
 
 ---
 
+## 🔄 High-Level Agent Flow
+
+```
+User Input (voice or text)
+        │
+        ▼
+  WebSocket message ──► websocket.py handler
+        │
+        ├─ Is it a chat? ──► agent.run() → streaming assistant_response
+        │
+        └─ Is it a task? ──► AgentRuntime.run()
+                                 │
+                                 ├─ build_structured_context()
+                                 ├─ LLM generates JSON plan
+                                 ├─ For each step: tool.safe_execute()
+                                 ├─ Observe desktop after each step
+                                 ├─ Replan if step fails (max 3 attempts)
+                                 └─ Return formatted summary → frontend
+```
+
+See [`docs/03_agentic_flow.md`](./docs/03_agentic_flow.md) for detailed flowcharts.
+
+---
+
 ## 🔮 Roadmap
 
 - [ ] **Multi-turn Barge-In** — voice interrupt during active TTS playback
-- [ ] **Local Model Preloading** — pre-fetch Ollama weights on sidecar launch to reduce TTFT
-- [ ] **Wayland Window Tracking** — enhance `ydotool` window management for KDE/GNOME Wayland
-- [ ] **Sandboxed bubblewrap Profiles** — user-configurable execution rules per app
+- [ ] **Local Model Preloading** — pre-fetch Ollama weights on sidecar launch
+- [ ] **Wayland Window Tracking** — enhance `ydotool` for KDE/GNOME Wayland
 - [ ] **MCP Server** — expose OpenSarthi tools as Model Context Protocol server
-- [ ] **Desktop Overlays** — bounding-box highlights on elements the agent is interacting with
-- [ ] **API Key Keyring** — migrate from plaintext `.env` to OS-level secret store (libsecret)
+- [ ] **Memory Module** — LanceDB vector search for long-term context recall
+- [ ] **Observer Pipeline** — screenshot + OCR for real-time screen understanding
+- [ ] **API Key Keyring** — migrate from plaintext `.env` to `libsecret`
 
 ---
 
@@ -186,13 +231,15 @@ opensarthi/
 
 - **Tauri v2 Capabilities** — frontend strictly scoped via granular permission files
 - **bubblewrap Sandboxing** — shell commands run in `bwrap` with isolated filesystem
-- **User Consent Dialogs** — any destructive action requires explicit user approval via UI
-- **Config Isolation** — all user data lives in `~/.config/opensarthi/` (never in AppImage mounts)
+- **User Consent Dialogs** — any destructive action requires explicit user approval
+- **Config Isolation** — all user data lives in `~/.config/opensarthi/`
 
 ---
 
 ## 📚 Further Reading
 
-- [Runtime README](./runtime/README.md) — Python sidecar internals, voice pipeline, agent architecture
-- [Desktop README](./apps/desktop/README.md) — Frontend components, theming, build process
-- [CHANGELOG](./CHANGELOG.md) — Detailed history of all changes and fixes
+- [`runtime/README.md`](./runtime/README.md) — Python sidecar internals, voice pipeline, agent architecture
+- [`docs/01_frontend_and_desktop_shell.md`](./docs/01_frontend_and_desktop_shell.md) — Frontend components, theming, build process
+- [`docs/02_backend_runtime_and_infra.md`](./docs/02_backend_runtime_and_infra.md) — Runtime internals, providers, voice
+- [`docs/03_agentic_flow.md`](./docs/03_agentic_flow.md) — Agentic loop flowcharts and decision logic
+- [`docs/04_websocket_protocol.md`](./docs/04_websocket_protocol.md) — WebSocket message type reference
