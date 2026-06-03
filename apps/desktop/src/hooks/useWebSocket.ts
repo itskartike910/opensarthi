@@ -269,6 +269,18 @@ export function useWebSocket(port: number | null) {
         const { classification } = msg.payload as { classification: string };
         useAssistantStore.getState().setLastClassification(classification);
       }),
+
+      wsClient.on("token_update", (msg) => {
+        const { request_tokens, response_tokens, total_tokens, delta_total_tokens } = msg.payload as any;
+        useAssistantStore.setState((s) => ({
+          tokenUsage: {
+            requestTokens: request_tokens,
+            responseTokens: response_tokens,
+            totalTokens: total_tokens,
+            sessionTotalTokens: s.tokenUsage.sessionTotalTokens + (delta_total_tokens || 0)
+          }
+        }));
+      }),
     ];
 
     return () => {

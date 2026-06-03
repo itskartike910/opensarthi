@@ -60,6 +60,28 @@ const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
   ]
 };
 
+const selectStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "12px 36px 12px 16px",
+  background: "rgba(10, 10, 18, 0.75)",
+  border: "1px solid rgba(255, 255, 255, 0.12)",
+  borderRadius: 10,
+  color: "white",
+  fontSize: 13,
+  outline: "none",
+  boxSizing: "border-box",
+  fontFamily: "inherit",
+  WebkitAppearance: "none",
+  MozAppearance: "none",
+  appearance: "none",
+  backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+  backgroundRepeat: "no-repeat",
+  backgroundPosition: "right 14px center",
+  backgroundSize: "16px",
+  colorScheme: "dark",
+  cursor: "pointer",
+};
+
 interface OnboardingViewProps {
   onComplete: (data: {
     skills: string[];
@@ -654,14 +676,7 @@ export function OnboardingView({ onComplete, isEdit = false, onClose }: Onboardi
                       <select
                         value={localModel}
                         onChange={(e) => setLocalModel(e.target.value)}
-                        style={{
-                          width: "100%", padding: "12px 16px",
-                          background: "rgba(255,255,255,0.05)",
-                          border: "1px solid rgba(255,255,255,0.12)",
-                          borderRadius: 10, color: "white", fontSize: 13,
-                          outline: "none", boxSizing: "border-box",
-                          fontFamily: "inherit",
-                        }}
+                        style={selectStyle}
                       >
                         {PROVIDER_MODELS.ollama.map((m) => (
                           <option key={m.value} value={m.value} style={{ background: "#0a0a12", color: "#fff" }}>
@@ -689,14 +704,7 @@ export function OnboardingView({ onComplete, isEdit = false, onClose }: Onboardi
                     <select
                       value={cloudModel}
                       onChange={(e) => setCloudModel(e.target.value)}
-                      style={{
-                        width: "100%", padding: "12px 16px",
-                        background: "rgba(255,255,255,0.05)",
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        borderRadius: 10, color: "white", fontSize: 13,
-                        outline: "none", boxSizing: "border-box",
-                        fontFamily: "inherit",
-                      }}
+                      style={selectStyle}
                     >
                       {(PROVIDER_MODELS[provider] || []).map((m) => (
                         <option key={m.value} value={m.value} style={{ background: "#0a0a12", color: "#fff" }}>

@@ -17,6 +17,16 @@ pub fn run() {
     if std::env::var("QT_FONT_DPI").is_err() {
         std::env::set_var("QT_FONT_DPI", "96");
     }
+    // Suppress GStreamer audio device enumeration errors on Linux/AppImage.
+    // All voice capture is handled by the Python sidecar (PyAudio) — WebKit
+    // does not need audio device access. Disabling GStreamer's appsrc/appsink
+    // pipeline prevents "element not found" and "no audio device" spam.
+    std::env::set_var("GST_GL_XINITTHREADS", "1");
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    // Suppress additional WebKit media device probing logs
+    if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
