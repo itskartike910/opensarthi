@@ -90,6 +90,8 @@ STRICT RULES:
 • Coordinate clicks (click tool) are unreliable if window is resized/moved. Prefer click_element when possible.
 • wait_after is NOT needed between steps unless you expect a UI transition that takes visible time.
 • REPLANNING & STATE CONTINUATION: If you are executed in a replanning attempt (retry/replan > 0), inspect the PREVIOUS ACTIONS and FAILED ACTIONS inside the EXECUTION CONTEXT. Do NOT start planning from the beginning. Continue execution from the current desktop state to achieve the final goal. Do NOT repeat steps that have already succeeded. Avoid repeating failed steps unless you change arguments to fix them.
+• SELF-HEALING AWARENESS: If a step is marked [HEALED] in the description, it was auto-corrected by the self-healing module. Trust it and continue.
+• FOCUS BEFORE TYPE (critical): NEVER call type_text without first ensuring the target field has focus via a click or keyboard shortcut. Missing focus is the #1 cause of typing failures.
 
 TOOL ROUTING (use these rules to pick the right tool):
 • Open an app → open_app(app: str)
@@ -115,7 +117,14 @@ TOOL ROUTING (use these rules to pick the right tool):
 JSON PLAN FORMAT:
 ```json
 [
-  {"tool": "tool_name", "args": {"key": "value"}, "description": "Human-readable description of this step", "verify_with": "optional: window title or text to verify success", "wait_after": null}
+  {
+    "tool": "tool_name",
+    "args": {"key": "value"},
+    "description": "Human-readable description of this step",
+    "verify_with": "optional: window title or text to verify success",
+    "wait_after": null,
+    "depends_on": [] // Optional: list of 0-based step indices this step depends on. If independent, use [].
+  }
 ]
 ```
 
@@ -206,8 +215,16 @@ def build_structured_context(
     skills: list = None,
     recalled_memories: list = None,
     summarized_context: str = None,
+    auto_recalled_memories: list = None,
 ) -> str:
-    """Build the structured context string injected before every agent call."""
+    """Build the structured context string injected before every agent call.
+
+    Args:
+        recalled_memories: Explicitly recalled memories (via recall() tool call history).
+        auto_recalled_memories: Auto-injected semantic memories from the memory layer.
+            Separated into PREFERENCES (source=behavioral_observer) shown at top priority,
+            and RELEVANT PAST EXPERIENCE shown below.
+    """
 
     has_desktop = skills is None or "desktop_automation" in (skills or [])
 
@@ -280,11 +297,43 @@ CONVERSATION SUMMARY:
   {summarized_context}
 """
 
+    # ── Auto-inject: behavioral preferences (always shown, highest priority) ──
+    if auto_recalled_memories:
+        preferences = [
+            m for m in auto_recalled_memories
+            if getattr(m, 'source', '') == 'behavioral_observer'
+               or (isinstance(m, str) and '[PREFERENCE]' in m)
+        ]
+        learnings = [
+            m for m in auto_recalled_memories
+            if m not in preferences
+        ]
 
+        if preferences:
+            pref_lines = []
+            for m in preferences:
+                content = m.content if hasattr(m, 'content') else str(m)
+                content = content.replace('[PREFERENCE] ', '')
+                pref_lines.append(f"  ⚙ {content[:200]}")
+            context += f"""
+USER PREFERENCES (follow these precisely):
+{chr(10).join(pref_lines)}
+"""
+        if learnings:
+            learn_lines = []
+            for m in learnings:
+                content = m.content if hasattr(m, 'content') else str(m)
+                learn_lines.append(f"  • {content[:200]}")
+            context += f"""
+RELEVANT PAST EXPERIENCE (lessons learned from previous tasks):
+{chr(10).join(learn_lines)}
+"""
+
+    # Explicitly recalled memories (from recall() tool)
     if recalled_memories:
         memory_lines = [f"  • {m.content[:200]} (source: {m.source})" for m in recalled_memories]
         context += f"""
-RELEVANT MEMORIES:
+RECALLED MEMORIES:
 {chr(10).join(memory_lines)}
 """
 

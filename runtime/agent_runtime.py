@@ -7,6 +7,9 @@ from state_machine import AgentState, AgentStateContext
 from planner.schemas import Plan, PlanStep, ToolResult
 from observation import DesktopObserver, DesktopSnapshot
 from dev_logger import DevLogger
+from agents.healer import HealerAgent
+from agents.reviewer import ReviewerAgent
+from agents.behavioral_observer import BehavioralObserver
 
 class TaskUsage:
     def __init__(self, request_tokens=0, response_tokens=0, total_tokens=0):
@@ -18,6 +21,8 @@ class AgentRuntime:
     """
     The stateful execution engine for OpenSarthi.
     Supports immediate cancellation of both LLM inference and tool execution.
+    Includes: self-healing (HealerAgent), self-improvement (ReviewerAgent),
+    behavioral preference learning (BehavioralObserver), and parallel step execution.
     """
 
     def __init__(self, ws_handler, agent: Agent, observer: DesktopObserver, deps=None, memory_manager=None, thread_id: str = None):
@@ -40,6 +45,25 @@ class AgentRuntime:
         # Fail-fast: track consecutive same-error failures per tool
         self._same_tool_fail_count: dict[str, int] = {}
         self._last_tool_error: dict[str, str] = {}
+        # Self-healing / self-improving sub-agents (lazy-init on first task)
+        self._healer: Optional[HealerAgent] = None
+        self._reviewer: Optional[ReviewerAgent] = None
+        self._observer_agent: Optional[BehavioralObserver] = None
+
+    def _get_healer(self, model) -> HealerAgent:
+        if self._healer is None:
+            self._healer = HealerAgent(model, self.deps)
+        return self._healer
+
+    def _get_reviewer(self, model) -> ReviewerAgent:
+        if self._reviewer is None:
+            self._reviewer = ReviewerAgent(model, self.deps)
+        return self._reviewer
+
+    def _get_observer_agent(self, model) -> BehavioralObserver:
+        if self._observer_agent is None:
+            self._observer_agent = BehavioralObserver(model, self.deps)
+        return self._observer_agent
 
     def pause(self):
         self._paused = True
@@ -167,8 +191,22 @@ class AgentRuntime:
                 await self._transition(AgentState.PLANNING)
 
                 recalled = []
+                auto_recalled = []
                 if self.memory:
                     recalled = await self.memory.recall(goal, top_k=3)
+                    # Auto-inject: broader semantic recall (goal + recent context)
+                    try:
+                        auto_recalled = await self.memory.recall(goal, top_k=5)
+                        # Also always fetch high-priority behavioral preferences
+                        pref_results = await self.memory.long.search("[PREFERENCE]", top_k=8)
+                        # Merge, deduplicate by content
+                        seen = {m.content for m in auto_recalled}
+                        for m in pref_results:
+                            if m.content not in seen:
+                                auto_recalled.append(m)
+                                seen.add(m.content)
+                    except Exception:
+                        pass
 
                 from planner.agent import build_structured_context
                 context = build_structured_context(
@@ -183,6 +221,7 @@ class AgentRuntime:
                     skills=getattr(self.deps, 'skills', None),
                     recalled_memories=recalled,
                     summarized_context=summarized_context,
+                    auto_recalled_memories=auto_recalled if auto_recalled else None,
                 )
 
                 if getattr(self, "logger", None):
@@ -213,6 +252,14 @@ class AgentRuntime:
                             source="agent",
                             importance=0.8
                         )
+                        # Fire behavioral observer after every successful response
+                        if message_history:
+                            asyncio.create_task(
+                                self._get_observer_agent(model).observe_and_store(
+                                    recent_messages=message_history,
+                                    memory_manager=self.memory,
+                                )
+                            )
                     await self._transition(AgentState.COMPLETE)
                     return self._format_final_response(response, self.cumulative_steps)
 
@@ -229,7 +276,8 @@ class AgentRuntime:
                         "description": s.description or s.tool,
                         "status": "pending",
                         "verify_with": s.verify_with,
-                        "wait_after": s.wait_after
+                        "wait_after": s.wait_after,
+                        "depends_on": getattr(s, "depends_on", []) or []
                     })
                 end_idx = len(self.cumulative_steps)
 
@@ -243,10 +291,16 @@ class AgentRuntime:
                 self.state.total_steps = len(plan.steps)
                 await self._transition(AgentState.PLANNING)
 
+                from planner.decomposer import get_parallel_groups
+                groups = get_parallel_groups(plan.steps)
+
                 plan_failed = False
                 last_step_idx = start_idx
-                for i in range(start_idx, end_idx):
-                    last_step_idx = i
+
+                async def execute_single_step(local_idx: int) -> bool:
+                    nonlocal plan_failed, last_step_idx
+                    i = start_idx + local_idx
+                    last_step_idx = max(last_step_idx, i)
                     step_data = self.cumulative_steps[i]
                     from planner.schemas import PlanStep as PS
                     step = PS(
@@ -254,15 +308,9 @@ class AgentRuntime:
                         args=step_data["args"],
                         description=step_data["description"],
                         verify_with=step_data["verify_with"],
-                        wait_after=step_data["wait_after"]
+                        wait_after=step_data["wait_after"],
+                        depends_on=step_data.get("depends_on", [])
                     )
-                    
-                    if self._cancel_requested:
-                        for remain_idx in range(i, end_idx):
-                            await self.ws.send_message("tool_terminated", {"index": remain_idx})
-                            if remain_idx < len(self.cumulative_steps):
-                                self.cumulative_steps[remain_idx]["status"] = "terminated"
-                        break
 
                     await self._transition(
                         AgentState.EXECUTING,
@@ -272,15 +320,17 @@ class AgentRuntime:
                     )
 
                     step_success = False
-                    self.state.retry_count = 0
-                    while self.state.retry_count <= self.state.max_retries:
+                    retry_count = 0
+                    max_retries = self.state.max_retries
+                    
+                    while retry_count <= max_retries:
                         await self._check_pause()
-                        if self._cancel_requested:
+                        if self._cancel_requested or plan_failed:
                             break
 
                         result = await self._execute_step(step, i)
 
-                        if self._cancel_requested:
+                        if self._cancel_requested or plan_failed:
                             break
 
                         if result.success:
@@ -300,7 +350,6 @@ class AgentRuntime:
                                 break
 
                         if not result.success:
-                            # Fail-fast: if the same tool fails with the same error twice, stop immediately
                             tool_key = step.tool
                             err_msg = (result.error or "").strip()[:200]
                             if self._last_tool_error.get(tool_key) == err_msg:
@@ -310,7 +359,6 @@ class AgentRuntime:
                                 self._last_tool_error[tool_key] = err_msg
 
                             if self._same_tool_fail_count.get(tool_key, 0) >= 2:
-                                # Hard stop — agent is looping
                                 import structlog
                                 structlog.get_logger().warning(
                                     "Fail-fast triggered: same tool failed with same error twice",
@@ -318,38 +366,119 @@ class AgentRuntime:
                                 )
                                 break
 
-                            if result.retryable and self.state.retry_count < self.state.max_retries:
-                                self.state.retry_count += 1
+                            # ── Self-Heal: try fixing the step before retrying ──
+                            if retry_count == 0 and err_msg:
+                                try:
+                                    await self.ws.send_message("tool_action", {
+                                        "tool": "self_heal",
+                                        "description": f"Self-healing diagnosis: {step.description}",
+                                        "status": "running",
+                                        "result": None
+                                    })
+                                    snap = await self.observer.snapshot()
+                                    screen_text = getattr(snap, "screen_text_summary", "") or ""
+                                    healer = self._get_healer(model)
+                                    healed = await healer.diagnose_and_fix(
+                                        failed_tool=step.tool,
+                                        failed_args=step.args or {},
+                                        description=step.description or step.tool,
+                                        error=err_msg,
+                                        screen_summary=screen_text,
+                                    )
+                                    if healed:
+                                        from planner.schemas import PlanStep as PS
+                                        healed_step = PS(
+                                            tool=healed["tool"],
+                                            args=healed.get("args", {}),
+                                            description=healed.get("description", f"[HEALED] {step.description}"),
+                                        )
+                                        result = await self._execute_step(healed_step, i)
+                                        
+                                        # Broadcast the outcome of the healer diagnosis
+                                        await self.ws.send_message("tool_action", {
+                                            "tool": "self_heal",
+                                            "description": f"Self-healing diagnosis: {step.description}",
+                                            "status": "success" if result.success else "error",
+                                            "result": f"Executed correction: {healed_step.description}" if result.success else f"Correction failed: {result.error}"
+                                        })
+
+                                        # Add the healing event to cumulative steps so it persists in final response / history
+                                        heal_log_step = {
+                                            "tool": "self_heal",
+                                            "description": f"Self-healing: {step.description} -> {healed_step.description}",
+                                            "status": "success" if result.success else "error",
+                                            "error": None if result.success else (result.error or "Healing failed")
+                                        }
+                                        self.cumulative_steps.append(heal_log_step)
+
+                                        if result.success:
+                                            step_success = True
+                                            if i < len(self.cumulative_steps):
+                                                self.cumulative_steps[i]["description"] = f"[HEALED] {step.description} -> {healed_step.description}"
+                                            completed_actions.append(healed_step.description)
+                                            break
+                                    else:
+                                        await self.ws.send_message("tool_action", {
+                                            "tool": "self_heal",
+                                            "description": f"Self-healing diagnosis: {step.description}",
+                                            "status": "error",
+                                            "result": "No self-healing path identified."
+                                        })
+                                except Exception as heal_err:
+                                    import structlog
+                                    structlog.get_logger().debug("Healer exception", error=str(heal_err))
+                                    await self.ws.send_message("tool_action", {
+                                        "tool": "self_heal",
+                                        "description": f"Self-healing diagnosis: {step.description}",
+                                        "status": "error",
+                                        "result": f"Diagnosis failed: {heal_err}"
+                                    })
+
+                            if result.retryable and retry_count < max_retries:
+                                retry_count += 1
                                 await self._transition(
                                     AgentState.RETRYING,
-                                    current_step_description=f"Retrying: {step.description} ({self.state.retry_count}/{self.state.max_retries})"
+                                    current_step_description=f"Retrying: {step.description} ({retry_count}/{max_retries})"
                                 )
                                 await self._cancellable_sleep(1.5)
-                                if self._cancel_requested:
+                                if self._cancel_requested or plan_failed:
                                     break
                             else:
                                 break
 
-                    if self._cancel_requested:
-                        for remain_idx in range(i, end_idx):
-                            await self.ws.send_message("tool_terminated", {"index": remain_idx})
-                            if remain_idx < len(self.cumulative_steps):
-                                self.cumulative_steps[remain_idx]["status"] = "terminated"
-                        break
+                    if self._cancel_requested or plan_failed:
+                        await self.ws.send_message("tool_terminated", {"index": i})
+                        if i < len(self.cumulative_steps):
+                            self.cumulative_steps[i]["status"] = "terminated"
+                        return False
 
                     if step_success:
                         completed_actions.append(step.description or f"Executed tool: {step.tool}")
                         if step.wait_after:
                             await self._transition(AgentState.WAITING)
                             await asyncio.sleep(step.wait_after)
+                        return True
                     else:
-                        for remain_idx in range(i + 1, end_idx):
-                            await self.ws.send_message("tool_terminated", {"index": remain_idx})
-                            if remain_idx < len(self.cumulative_steps):
-                                self.cumulative_steps[remain_idx]["status"] = "terminated"
                         failed_actions.append(f"{step.description or step.tool} (Reason: {result.error})")
                         plan_failed = True
+                        return False
+
+                for group in groups:
+                    if plan_failed or self._cancel_requested:
                         break
+                    
+                    tasks = [execute_single_step(idx) for idx in group]
+                    results = await asyncio.gather(*tasks)
+                    if not all(results):
+                        plan_failed = True
+                        break
+
+                # Terminate any remaining steps if failed
+                if plan_failed or self._cancel_requested:
+                    for remain_idx in range(start_idx, end_idx):
+                        if remain_idx < len(self.cumulative_steps) and self.cumulative_steps[remain_idx]["status"] in ("pending", "running"):
+                            self.cumulative_steps[remain_idx]["status"] = "terminated"
+                            await self.ws.send_message("tool_terminated", {"index": remain_idx})
 
                 if self._cancel_requested:
                     await self._transition(AgentState.IDLE)
@@ -373,6 +502,23 @@ class AgentRuntime:
                 replanning_attempts += 1
                 self.state.retry_count = replanning_attempts
                 await self._transition(AgentState.RETRYING, current_step_description="Verifying task completion...")
+                # ── Fire-and-forget: learn from this successful execution ──
+                if self.memory and completed_actions:
+                    asyncio.create_task(
+                        self._get_reviewer(model).review_and_learn(
+                            goal=goal,
+                            execution_log=self.cumulative_steps,
+                            outcome="SUCCESS",
+                            memory_manager=self.memory,
+                        )
+                    )
+                    if message_history:
+                        asyncio.create_task(
+                            self._get_observer_agent(model).observe_and_store(
+                                recent_messages=message_history,
+                                memory_manager=self.memory,
+                            )
+                        )
                 await asyncio.sleep(1.0)
 
             await self._transition(AgentState.ERROR, error_message="Task failed after maximum replanning attempts.")
@@ -403,6 +549,15 @@ Explain to the user why the task could not be completed. Do NOT output a JSON pl
                     content=f"Goal: {goal}\nOutcome (Failed): {response}\nCompleted: {completed_actions}\nFailed: {failed_actions}",
                     source="agent",
                     importance=0.7
+                )
+                # Fire-and-forget: reviewer + behavioral observer on failure too
+                asyncio.create_task(
+                    self._get_reviewer(model).review_and_learn(
+                        goal=goal,
+                        execution_log=self.cumulative_steps,
+                        outcome=f"FAILED: {response[:100]}",
+                        memory_manager=self.memory,
+                    )
                 )
             return self._format_final_response(response, self.cumulative_steps)
 
@@ -581,7 +736,13 @@ Explain to the user why the task could not be completed. Do NOT output a JSON pl
         tool = get(step.tool)
         if tool is None:
             err_res = ToolResult(success=False, error=f"Unknown tool: {step.tool}", retryable=False)
-            await self.ws.send_message("tool_error", {"index": index, "error": err_res.error})
+            await self.ws.send_message("tool_error", {
+                "index": index,
+                "error": err_res.error,
+                "tool": step.tool,
+                "description": step.description,
+                "args": step.args
+            })
             if index < len(self.cumulative_steps):
                 self.cumulative_steps[index]["status"] = "error"
                 self.cumulative_steps[index]["error"] = err_res.error
@@ -593,7 +754,12 @@ Explain to the user why the task could not be completed. Do NOT output a JSON pl
             "status": "running",
             "result": None
         })
-        await self.ws.send_message("tool_started", {"index": index})
+        await self.ws.send_message("tool_started", {
+            "index": index,
+            "tool": step.tool,
+            "description": step.description,
+            "args": step.args
+        })
         if index < len(self.cumulative_steps):
             self.cumulative_steps[index]["status"] = "running"
 
@@ -616,12 +782,24 @@ Explain to the user why the task could not be completed. Do NOT output a JSON pl
         })
 
         if res.success:
-            await self.ws.send_message("tool_completed", {"index": index, "result": res.observation})
+            await self.ws.send_message("tool_completed", {
+                "index": index,
+                "result": res.observation,
+                "tool": step.tool,
+                "description": step.description,
+                "args": step.args
+            })
             if index < len(self.cumulative_steps):
                 self.cumulative_steps[index]["status"] = "success"
                 self.cumulative_steps[index]["result"] = res.observation
         else:
-            await self.ws.send_message("tool_error", {"index": index, "error": res.error or "Unknown error"})
+            await self.ws.send_message("tool_error", {
+                "index": index,
+                "error": res.error or "Unknown error",
+                "tool": step.tool,
+                "description": step.description,
+                "args": step.args
+            })
             if index < len(self.cumulative_steps):
                 self.cumulative_steps[index]["status"] = "error"
                 self.cumulative_steps[index]["error"] = res.error or "Unknown error"

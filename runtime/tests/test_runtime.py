@@ -121,5 +121,66 @@ class TestAgentRuntimeCumulativeSteps(unittest.TestCase):
         self.assertIn("Task processed", res)
 
 
+class TestTaskDecomposer(unittest.TestCase):
+    def test_no_dependencies(self):
+        from planner.schemas import PlanStep
+        from planner.decomposer import get_parallel_groups
+        steps = [
+            PlanStep(tool="shell", args={}, description="Step 1", depends_on=[]),
+            PlanStep(tool="shell", args={}, description="Step 2", depends_on=[]),
+            PlanStep(tool="shell", args={}, description="Step 3", depends_on=[]),
+        ]
+        groups = get_parallel_groups(steps)
+        self.assertEqual(groups, [[0, 1, 2]])
+
+    def test_linear_dependencies(self):
+        from planner.schemas import PlanStep
+        from planner.decomposer import get_parallel_groups
+        steps = [
+            PlanStep(tool="shell", args={}, description="Step 1", depends_on=[]),
+            PlanStep(tool="shell", args={}, description="Step 2", depends_on=[0]),
+            PlanStep(tool="shell", args={}, description="Step 3", depends_on=[1]),
+        ]
+        groups = get_parallel_groups(steps)
+        self.assertEqual(groups, [[0], [1], [2]])
+
+    def test_fork_join_dependencies(self):
+        from planner.schemas import PlanStep
+        from planner.decomposer import get_parallel_groups
+        # Step 0: root
+        # Step 1, 2: depend on 0 (can run in parallel)
+        # Step 3: depends on 1 and 2
+        steps = [
+            PlanStep(tool="shell", args={}, description="Step 0", depends_on=[]),
+            PlanStep(tool="shell", args={}, description="Step 1", depends_on=[0]),
+            PlanStep(tool="shell", args={}, description="Step 2", depends_on=[0]),
+            PlanStep(tool="shell", args={}, description="Step 3", depends_on=[1, 2]),
+        ]
+        groups = get_parallel_groups(steps)
+        self.assertEqual(groups, [[0], [1, 2], [3]])
+
+    def test_dependency_cycle_fallback(self):
+        from planner.schemas import PlanStep
+        from planner.decomposer import get_parallel_groups
+        # Step 0 depends on 1, Step 1 depends on 0
+        steps = [
+            PlanStep(tool="shell", args={}, description="Step 0", depends_on=[1]),
+            PlanStep(tool="shell", args={}, description="Step 1", depends_on=[0]),
+        ]
+        groups = get_parallel_groups(steps)
+        # Should fallback to sequential
+        self.assertEqual(groups, [[0], [1]])
+
+    def test_invalid_dependency_fallback(self):
+        from planner.schemas import PlanStep
+        from planner.decomposer import get_parallel_groups
+        steps = [
+            PlanStep(tool="shell", args={}, description="Step 0", depends_on=[99]),
+        ]
+        groups = get_parallel_groups(steps)
+        # Should fallback to sequential
+        self.assertEqual(groups, [[0]])
+
+
 if __name__ == "__main__":
     unittest.main()
