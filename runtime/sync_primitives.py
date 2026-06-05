@@ -48,6 +48,7 @@ async def wait_for_window(
     """
     Wait until a window with a matching title appears.
     """
+    import shutil
     async def check():
         try:
             if platform.system() == "Windows":
@@ -57,14 +58,43 @@ async def wait_for_window(
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL
                 )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2)
+                return bool(stdout.decode().strip())
             else:
-                proc = await asyncio.create_subprocess_exec(
-                    "xdotool", "search", "--name", title_contains,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL
-                )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2)
-            return bool(stdout.decode().strip())
+                # Let's check using wmctrl if available for robust title normalization matching
+                if shutil.which("wmctrl"):
+                    proc = await asyncio.create_subprocess_exec(
+                        "wmctrl", "-l",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2)
+                    lines = stdout.decode("utf-8", errors="ignore").strip().split("\n")
+                    
+                    # Normalize helper: lowercase, strip extra spaces/special chars, replace dashes
+                    def normalize(s: str) -> str:
+                        s = s.lower().replace("—", "-").replace("–", "-")
+                        return "".join(c for c in s if c.isalnum() or c in " -")
+
+                    target_norm = normalize(title_contains)
+                    for line in lines:
+                        parts = line.split(None, 3)
+                        if len(parts) >= 4:
+                            w_title = parts[3]
+                            if target_norm in normalize(w_title):
+                                return True
+                            if title_contains.lower() in w_title.lower():
+                                return True
+                    return False
+                else:
+                    # Fallback to xdotool search
+                    proc = await asyncio.create_subprocess_exec(
+                        "xdotool", "search", "--name", title_contains,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2)
+                    return bool(stdout.decode().strip())
         except Exception:
             return False
 

@@ -57,7 +57,10 @@ class Session:
             "payload": payload,
             "timestamp": int(asyncio.get_event_loop().time() * 1000)
         }
-        await self.ws.send_json(msg)
+        try:
+            await self.ws.send_json(msg)
+        except Exception as e:
+            logger.warning("Failed to send websocket message (client probably disconnected)", error=str(e), msg_type=msg_type)
 
     async def accumulate_and_update_tokens(self, usage, thread_id: str = None):
         if not usage:
