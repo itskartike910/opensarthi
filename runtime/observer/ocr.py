@@ -19,11 +19,9 @@ async def extract_text(image_bytes: bytes, lang: str = "eng") -> Optional[str]:
 
         def _run_ocr():
             img = Image.open(io.BytesIO(image_bytes))
-            # Crop to center 50% for fast processing and focusing on active work area
-            w, h = img.size
-            region = img.crop((w // 4, h // 4, 3 * w // 4, 3 * h // 4))
-            text = pytesseract.image_to_string(region, lang=lang)
-            return " ".join(text.split())[:500]  # Clean whitespace and truncate
+            text = pytesseract.image_to_string(img, lang=lang)
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            return "\n".join(lines)[:3000]
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _run_ocr)

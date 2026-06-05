@@ -21,15 +21,67 @@ class MediaControlTool(BaseTool):
             return ToolResult.fail("Missing action parameter", retryable=False)
 
         if not shutil.which("playerctl"):
-            # Fallback: support pulse-audio pactl for volume
-            if action in ["volume-up", "volume-down"] and shutil.which("pactl"):
-                val = "+5%" if action == "volume-up" else "-5%"
-                proc = await asyncio.create_subprocess_exec(
-                    "pactl", "set-sink-volume", "@DEFAULT_SINK@", val
-                )
-                await proc.communicate()
-                return ToolResult.ok(f"Volume adjusted using pactl fallback")
-            return ToolResult.fail("playerctl is not installed on this system.", retryable=False)
+            from tools.desktop import _provider, XdotoolProvider, YdotoolProvider, PyAutoGUIProvider
+
+            # 1. Volume tool fallbacks
+            if action in ["volume-up", "volume-down"]:
+                if shutil.which("pactl"):
+                    val = "+5%" if action == "volume-up" else "-5%"
+                    proc = await asyncio.create_subprocess_exec(
+                        "pactl", "set-sink-volume", "@DEFAULT_SINK@", val
+                    )
+                    await proc.communicate()
+                    return ToolResult.ok("Volume adjusted using pactl fallback")
+                elif shutil.which("amixer"):
+                    val = "5%+" if action == "volume-up" else "5%-"
+                    proc = await asyncio.create_subprocess_exec(
+                        "amixer", "set", "Master", val
+                    )
+                    await proc.communicate()
+                    return ToolResult.ok("Volume adjusted using amixer fallback")
+
+            # 2. Keyboard simulation mappings
+            X11_KEYS = {
+                "play-pause": "XF86AudioPlay",
+                "next": "XF86AudioNext",
+                "previous": "XF86AudioPrev",
+                "stop": "XF86AudioStop",
+                "volume-up": "XF86AudioRaiseVolume",
+                "volume-down": "XF86AudioLowerVolume",
+            }
+            WAYLAND_KEYS = {
+                "play-pause": "172",
+                "next": "163",
+                "previous": "165",
+                "stop": "166",
+                "volume-up": "115",
+                "volume-down": "114",
+            }
+            WINDOWS_KEYS = {
+                "play-pause": "playpause",
+                "next": "nexttrack",
+                "previous": "prevtrack",
+                "stop": "stop",
+                "volume-up": "volumeup",
+                "volume-down": "volumedown",
+            }
+
+            key = None
+            if isinstance(_provider, XdotoolProvider):
+                key = X11_KEYS.get(action)
+            elif isinstance(_provider, YdotoolProvider):
+                key = WAYLAND_KEYS.get(action)
+            elif isinstance(_provider, PyAutoGUIProvider):
+                key = WINDOWS_KEYS.get(action)
+
+            if key:
+                success = await _provider.press_key(key)
+                if success:
+                    return ToolResult.ok(f"Media command '{action}' simulated via keyboard key '{key}'")
+                else:
+                    return ToolResult.fail(f"Failed to simulate keyboard key '{key}' for action '{action}'")
+
+            return ToolResult.fail("playerctl is not installed, and no keyboard fallback is available.", retryable=False)
 
         try:
             if action == "volume-up":

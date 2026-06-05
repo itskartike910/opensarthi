@@ -93,5 +93,23 @@ class TestTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res.success)
         self.assertEqual(res.observation.strip(), "hello world")
 
+    @patch('shutil.which')
+    @patch('tools.desktop._provider')
+    async def test_media_control_tool_fallback(self, mock_provider, mock_which):
+        from tools.media import MediaControlTool
+        from tools.desktop import XdotoolProvider
+        
+        # Scenario: playerctl and audio tools are not available, fallback to keypress simulation
+        mock_which.return_value = None
+        mock_provider.__class__ = XdotoolProvider
+        mock_provider.press_key = AsyncMock(return_value=True)
+        
+        tool = MediaControlTool()
+        res = await tool.execute({"action": "play-pause"})
+        
+        self.assertTrue(res.success)
+        self.assertIn("simulated via keyboard key 'XF86AudioPlay'", res.observation)
+        mock_provider.press_key.assert_called_once_with("XF86AudioPlay")
+
 if __name__ == "__main__":
     unittest.main()

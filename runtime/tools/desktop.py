@@ -259,7 +259,12 @@ class ClickTool(BaseTool):
 
 class TypeTextTool(BaseTool):
     name = "type_text"
-    description = "Type text into the currently pinned task window. Automatically re-focuses the target window before typing."
+    description = (
+        "Type text into the active input focus of the pinned window. "
+        "IMPORTANT: This does NOT click or focus the specific input field automatically. "
+        "You MUST click the input field first, or send the appropriate keyboard shortcut "
+        "(like ctrl+l to focus browser address bar, or '/' to focus YouTube search) before using this tool."
+    )
     risk_level = RiskLevel.MODERATE
     schema = {
         "type": "object",
@@ -508,22 +513,100 @@ class ClickElementTool(BaseTool):
             return ToolResult.fail("Provide at least one of: role, name", retryable=False)
 
         provider = AccessibilityProvider()
-        if not provider.available:
-            return ToolResult.fail(
-                "AT-SPI not available — use coordinate click instead",
-                retryable=False
-            )
+        elements = []
+        if provider.available:
+            try:
+                elements = provider.find_elements(
+                    role=role or None,
+                    name=name or None,
+                    name_contains=name or None,
+                    max_results=5
+                )
+            except Exception:
+                pass
 
-        elements = provider.find_elements(
-            role=role or None,
-            name=name or None,
-            name_contains=name or None,
-            max_results=5
-        )
+        if not elements and name:
+            # Fallback to OCR text detection and clicking
+            try:
+                from PIL import Image
+                import io
+                import pytesseract
+                from observer.screen import capture_screenshot
+                
+                screenshot_bytes = await capture_screenshot()
+                if screenshot_bytes:
+                    img = Image.open(io.BytesIO(screenshot_bytes))
+                    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                    
+                    query = name.lower().strip()
+                    words = []
+                    n = len(data['text'])
+                    for i in range(n):
+                        text_val = str(data['text'][i]).strip()
+                        if text_val:
+                            words.append({
+                                'text': text_val.lower(),
+                                'left': data['left'][i],
+                                'top': data['top'][i],
+                                'width': data['width'][i],
+                                'height': data['height'][i],
+                                'line': (data.get('page_num', [0])[i], data.get('block_num', [0])[i], data.get('par_num', [0])[i], data.get('line_num', [0])[i])
+                            })
+                    
+                    lines = {}
+                    for w in words:
+                        line_id = w['line']
+                        if line_id not in lines:
+                            lines[line_id] = []
+                        lines[line_id].append(w)
+                        
+                    ocr_center = None
+                    for line_id, line_words in lines.items():
+                        line_text = " ".join([w['text'] for w in line_words])
+                        if query in line_text:
+                            best_range = None
+                            min_len = float('inf')
+                            for i in range(len(line_words)):
+                                for j in range(i, len(line_words)):
+                                    sub_text = " ".join([line_words[k]['text'] for k in range(i, j+1)])
+                                    if query in sub_text:
+                                        if (j - i) < min_len:
+                                            min_len = j - i
+                                            best_range = (i, j)
+                                        break
+                            if best_range:
+                                i, j = best_range
+                                matching_words = line_words[i:j+1]
+                                min_x = min(w['left'] for w in matching_words)
+                                min_y = min(w['top'] for w in matching_words)
+                                max_x = max(w['left'] + w['width'] for w in matching_words)
+                                max_y = max(w['top'] + w['height'] for w in matching_words)
+                                ocr_center = ((min_x + max_x) // 2, (min_y + max_y) // 2)
+                                break
+                    
+                    if ocr_center:
+                        x, y = ocr_center
+                        window_id = _get_pinned_window_id()
+                        if window_id:
+                            await _ensure_window_focus(window_id)
+                        success = await _provider.click(x, y, button="left")
+                        if success:
+                            return ToolResult.ok(
+                                observation=f"Clicked OCR-detected text '{name}' at ({x}, {y})",
+                                confidence=ToolResultConfidence.HIGH,
+                                ui_changed=True
+                            )
+            except Exception:
+                pass
 
         if not elements:
+            if not provider.available:
+                return ToolResult.fail(
+                    f"AT-SPI not available and text '{name}' not found via OCR",
+                    retryable=False
+                )
             return ToolResult.fail(
-                f"No element found: role={role!r} name={name!r}",
+                f"No element found via AT-SPI or OCR: role={role!r} name={name!r}",
                 retryable=True,
                 suggested_next="Try a coordinate click or check element names with observe_desktop"
             )

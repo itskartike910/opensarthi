@@ -78,8 +78,7 @@ class DesktopObserver:
             except Exception:
                 pass
 
-        # 3. OCR fallback (only if AT-SPI gave us nothing useful)
-        if not snap.focused_element_text:
-            snap.screen_text_summary = obs_res.ocr_text
+        # 3. Screen text summary (OCR)
+        snap.screen_text_summary = obs_res.ocr_text
 
         return snap
