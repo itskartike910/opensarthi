@@ -756,6 +756,7 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onOpenCustomiz
                   display: "flex", 
                   alignItems: "flex-end", 
                   flex: 1, 
+                  minWidth: 0,
                   height: "100%", 
                   overflowX: "auto", 
                   scrollbarWidth: "none", 
@@ -763,6 +764,9 @@ export function AssistantOverlay({ onOpenSettings, onOpenHistory, onOpenCustomiz
                   paddingLeft: "16px"
                 }}
                 className="chrome-tabs-container"
+                onWheel={(e) => {
+                  e.currentTarget.scrollLeft += e.deltaY;
+                }}
               >
                 {tabs.map((tab) => {
                   const isActive = tab.id === activeThreadId;
