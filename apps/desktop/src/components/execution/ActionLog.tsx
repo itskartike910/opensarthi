@@ -115,6 +115,7 @@ export function ActionLog({ plan, selectedTaskId, messages }: ActionLogProps) {
           const isSuccess = action.status === "success";
           const isError = action.status === "error" || action.status === "failed";
           const isTerminated = action.status === "terminated";
+          const isHeal = action.tool === "self_heal" || action.tool?.toLowerCase().includes("heal");
           
           let statusColor = "var(--text-muted)";
           let statusText = "QUEUED";
@@ -122,7 +123,21 @@ export function ActionLog({ plan, selectedTaskId, messages }: ActionLogProps) {
           let cardBorder = "1px solid var(--border)";
           let glow = "none";
           
-          if (isRunning) {
+          if (isHeal) {
+            statusColor = isRunning ? "var(--warning)" : isSuccess ? "var(--success)" : "var(--danger)";
+            statusText = isRunning ? "DIAGNOSING..." : isSuccess ? "HEALED" : "HEAL FAILED";
+            cardBg = isRunning 
+              ? "rgba(255, 170, 0, 0.08)" 
+              : isSuccess 
+              ? "rgba(0, 230, 180, 0.06)" 
+              : "rgba(255, 60, 60, 0.06)";
+            cardBorder = isRunning 
+              ? "1px dashed var(--warning)" 
+              : isSuccess 
+              ? "1px dashed var(--success)" 
+              : "1px dashed var(--danger)";
+            glow = isRunning ? "0 0 10px rgba(255, 170, 0, 0.2)" : "none";
+          } else if (isRunning) {
             statusColor = "var(--accent)";
             statusText = "RUNNING";
             cardBg = "rgba(255, 0, 0, 0.15)";
@@ -165,8 +180,14 @@ export function ActionLog({ plan, selectedTaskId, messages }: ActionLogProps) {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: "10px", fontWeight: "bold", fontFamily: "var(--font-mono)", color: "var(--accent)", textTransform: "uppercase" }}>
-                  {action.tool}
+                <div style={{ 
+                  fontSize: "10px", 
+                  fontWeight: "bold", 
+                  fontFamily: "var(--font-mono)", 
+                  color: isHeal ? "var(--warning)" : "var(--accent)", 
+                  textTransform: "uppercase" 
+                }}>
+                  {isHeal ? "🩹 " : ""}{action.tool}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                   <span style={{ fontSize: "9px", color: statusColor, fontWeight: "bold", letterSpacing: "0.05em" }}>

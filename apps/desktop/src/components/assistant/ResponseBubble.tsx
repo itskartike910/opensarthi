@@ -228,6 +228,52 @@ function parseInlineMarkdown(text: string) {
 function parseMarkdownLine(line: string, lineIndex: number) {
   const trimmed = line.trim();
   
+  // Custom execution/healer trace styling inside bubbles
+  if (trimmed.startsWith("✓ ")) {
+    const desc = trimmed.slice(2);
+    const isHeal = desc.toLowerCase().includes("self-healing") || desc.toLowerCase().includes("self_heal");
+    return (
+      <div key={lineIndex} style={{ 
+        display: "flex", 
+        alignItems: "center", 
+        gap: "6px", 
+        fontSize: "11px", 
+        fontFamily: "var(--font-mono)", 
+        color: isHeal ? "var(--warning)" : "var(--success)", 
+        background: isHeal ? "rgba(255, 170, 0, 0.05)" : "rgba(0, 230, 180, 0.04)", 
+        border: isHeal ? "1px dashed rgba(255, 170, 0, 0.25)" : "1px solid rgba(0, 230, 180, 0.15)",
+        borderRadius: "var(--radius-sm)", 
+        padding: "4px 8px", 
+        margin: "4px 0" 
+      }}>
+        <span>{isHeal ? "🩹" : "✓"}</span>
+        <span>{parseInlineMarkdown(desc)}</span>
+      </div>
+    );
+  }
+  if (trimmed.startsWith("❌")) {
+    const isHeal = trimmed.toLowerCase().includes("self-healing") || trimmed.toLowerCase().includes("self_heal");
+    const contentText = trimmed.startsWith("❌ ") ? trimmed.slice(2) : trimmed.slice(1);
+    return (
+      <div key={lineIndex} style={{ 
+        display: "flex", 
+        alignItems: "center", 
+        gap: "6px", 
+        fontSize: "11px", 
+        fontFamily: "var(--font-mono)", 
+        color: "var(--danger)", 
+        background: "rgba(255, 60, 60, 0.04)", 
+        border: isHeal ? "1px dashed rgba(255, 60, 60, 0.25)" : "1px solid rgba(255, 60, 60, 0.15)",
+        borderRadius: "var(--radius-sm)", 
+        padding: "4px 8px", 
+        margin: "4px 0" 
+      }}>
+        <span>❌</span>
+        <span>{parseInlineMarkdown(contentText)}</span>
+      </div>
+    );
+  }
+
   // Headers
   if (trimmed.startsWith("# ")) {
     return <h1 key={lineIndex} style={{ fontSize: "1.4em", margin: "12px 0 6px 0", color: "var(--accent)", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "4px", fontWeight: "bold" }}>{parseInlineMarkdown(trimmed.slice(2))}</h1>;

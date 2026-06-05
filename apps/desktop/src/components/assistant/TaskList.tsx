@@ -134,11 +134,14 @@ export function TaskList({
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("✓ ")) {
-        toolActions.push({ tool: "step", description: trimmed.slice(2), status: "success", timestamp: nextAssistant.timestamp });
+        const desc = trimmed.slice(2);
+        const isHeal = desc.toLowerCase().includes("self-healing") || desc.toLowerCase().includes("self_heal");
+        toolActions.push({ tool: isHeal ? "self_heal" : "step", description: desc, status: "success", timestamp: nextAssistant.timestamp });
       } else if (trimmed.startsWith("❌")) {
         const cleanDesc = trimmed.startsWith("❌ ") ? trimmed.slice(2) : trimmed.slice(1);
         const stepStatus = cleanDesc.includes("(Reason: Terminated)") ? "terminated" : "error";
-        toolActions.push({ tool: "step", description: cleanDesc, status: stepStatus, timestamp: nextAssistant.timestamp });
+        const isHeal = cleanDesc.toLowerCase().includes("self-healing") || cleanDesc.toLowerCase().includes("self_heal");
+        toolActions.push({ tool: isHeal ? "self_heal" : "step", description: cleanDesc, status: stepStatus, timestamp: nextAssistant.timestamp });
       }
     }
 
