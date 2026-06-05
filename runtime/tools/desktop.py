@@ -20,12 +20,41 @@ class XdotoolProvider:
 
     async def type_text(self, text: str, window_id: Optional[str] = None) -> bool:
         await asyncio.sleep(0.3)
+        if len(text) > 20 and shutil.which("xsel"):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "xsel", "-b", "-i",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await proc.communicate(input=text.encode("utf-8"))
+                if proc.returncode == 0:
+                    if window_id:
+                        focus_proc = await asyncio.create_subprocess_exec(
+                            "xdotool", "windowactivate", "--sync", window_id,
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL
+                        )
+                        await focus_proc.communicate()
+                        await asyncio.sleep(0.15)
+                    cmd = ["xdotool", "key", "--clearmodifiers", "ctrl+v"]
+                    paste_proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await paste_proc.communicate()
+                    return paste_proc.returncode == 0
+            except Exception:
+                pass
+
         cmd = ["xdotool"]
         if window_id:
             # Focus the pinned window first, then type into it by window ID
-            cmd += ["type", "--window", window_id, "--clearmodifiers", "--delay", "50", text]
+            cmd += ["type", "--window", window_id, "--clearmodifiers", "--delay", "15", text]
         else:
-            cmd += ["type", "--clearmodifiers", "--delay", "50", text]
+            cmd += ["type", "--clearmodifiers", "--delay", "15", text]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

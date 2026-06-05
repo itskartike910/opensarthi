@@ -49,6 +49,7 @@ class AgentRuntime:
         self._healer: Optional[HealerAgent] = None
         self._reviewer: Optional[ReviewerAgent] = None
         self._observer_agent: Optional[BehavioralObserver] = None
+        self._gui_lock = asyncio.Lock()
 
     def _get_healer(self, model) -> HealerAgent:
         if self._healer is None:
@@ -302,166 +303,182 @@ class AgentRuntime:
                     i = start_idx + local_idx
                     last_step_idx = max(last_step_idx, i)
                     step_data = self.cumulative_steps[i]
-                    from planner.schemas import PlanStep as PS
-                    step = PS(
-                        tool=step_data["tool"],
-                        args=step_data["args"],
-                        description=step_data["description"],
-                        verify_with=step_data["verify_with"],
-                        wait_after=step_data["wait_after"],
-                        depends_on=step_data.get("depends_on", [])
-                    )
-
-                    await self._transition(
-                        AgentState.EXECUTING,
-                        current_step_index=i,
-                        current_step_description=step.description,
-                        retry_count=0
-                    )
-
-                    step_success = False
-                    retry_count = 0
-                    max_retries = self.state.max_retries
+                    tool_name = step_data.get("tool", "")
                     
-                    while retry_count <= max_retries:
-                        await self._check_pause()
-                        if self._cancel_requested or plan_failed:
-                            break
+                    is_gui = tool_name in {
+                        "click", "type_text", "press_key", "click_element",
+                        "focus_window", "observe_desktop", "wait_for_window",
+                        "wait_for_text", "open_app"
+                    }
 
-                        result = await self._execute_step(step, i)
+                    async def run_step_logic():
+                        nonlocal plan_failed
+                        from planner.schemas import PlanStep as PS
+                        step = PS(
+                            tool=step_data["tool"],
+                            args=step_data["args"],
+                            description=step_data["description"],
+                            verify_with=step_data["verify_with"],
+                            wait_after=step_data["wait_after"],
+                            depends_on=step_data.get("depends_on", [])
+                        )
 
-                        if self._cancel_requested or plan_failed:
-                            break
+                        await self._transition(
+                            AgentState.EXECUTING,
+                            current_step_index=i,
+                            current_step_description=step.description,
+                            retry_count=0
+                        )
 
-                        if result.success:
-                            if step.verify_with:
-                                await self._transition(AgentState.OBSERVING)
-                                verified = await self._verify_postcondition(step.verify_with)
-                                if not verified:
-                                    result = ToolResult.fail(
-                                        error=f"Post-condition failed: {step.verify_with}",
-                                        retryable=True
-                                    )
+                        step_success = False
+                        retry_count = 0
+                        max_retries = self.state.max_retries
+                        
+                        while retry_count <= max_retries:
+                            await self._check_pause()
+                            if self._cancel_requested or plan_failed:
+                                break
+
+                            result = await self._execute_step(step, i)
+
+                            if self._cancel_requested or plan_failed:
+                                break
+
+                            if result.success:
+                                if step.verify_with:
+                                    await self._transition(AgentState.OBSERVING)
+                                    verified = await self._verify_postcondition(step.verify_with)
+                                    if not verified:
+                                        result = ToolResult.fail(
+                                            error=f"Post-condition failed: {step.verify_with}",
+                                            retryable=True
+                                        )
+                                    else:
+                                        step_success = True
+                                        break
                                 else:
                                     step_success = True
                                     break
-                            else:
-                                step_success = True
-                                break
 
-                        if not result.success:
-                            tool_key = step.tool
-                            err_msg = (result.error or "").strip()[:200]
-                            if self._last_tool_error.get(tool_key) == err_msg:
-                                self._same_tool_fail_count[tool_key] = self._same_tool_fail_count.get(tool_key, 1) + 1
-                            else:
-                                self._same_tool_fail_count[tool_key] = 1
-                                self._last_tool_error[tool_key] = err_msg
+                            if not result.success:
+                                tool_key = step.tool
+                                err_msg = (result.error or "").strip()[:200]
+                                if self._last_tool_error.get(tool_key) == err_msg:
+                                    self._same_tool_fail_count[tool_key] = self._same_tool_fail_count.get(tool_key, 1) + 1
+                                else:
+                                    self._same_tool_fail_count[tool_key] = 1
+                                    self._last_tool_error[tool_key] = err_msg
 
-                            if self._same_tool_fail_count.get(tool_key, 0) >= 2:
-                                import structlog
-                                structlog.get_logger().warning(
-                                    "Fail-fast triggered: same tool failed with same error twice",
-                                    tool=tool_key, error=err_msg
-                                )
-                                break
-
-                            # ── Self-Heal: try fixing the step before retrying ──
-                            if retry_count == 0 and err_msg:
-                                try:
-                                    await self.ws.send_message("tool_action", {
-                                        "tool": "self_heal",
-                                        "description": f"Self-healing diagnosis: {step.description}",
-                                        "status": "running",
-                                        "result": None
-                                    })
-                                    snap = await self.observer.snapshot()
-                                    screen_text = getattr(snap, "screen_text_summary", "") or ""
-                                    healer = self._get_healer(model)
-                                    healed = await healer.diagnose_and_fix(
-                                        failed_tool=step.tool,
-                                        failed_args=step.args or {},
-                                        description=step.description or step.tool,
-                                        error=err_msg,
-                                        screen_summary=screen_text,
+                                if self._same_tool_fail_count.get(tool_key, 0) >= 2:
+                                    import structlog
+                                    structlog.get_logger().warning(
+                                        "Fail-fast triggered: same tool failed with same error twice",
+                                        tool=tool_key, error=err_msg
                                     )
-                                    if healed:
-                                        from planner.schemas import PlanStep as PS
-                                        healed_step = PS(
-                                            tool=healed["tool"],
-                                            args=healed.get("args", {}),
-                                            description=healed.get("description", f"[HEALED] {step.description}"),
-                                        )
-                                        result = await self._execute_step(healed_step, i)
-                                        
-                                        # Broadcast the outcome of the healer diagnosis
+                                    break
+
+                                # ── Self-Heal: try fixing the step before retrying ──
+                                if retry_count == 0 and err_msg:
+                                    try:
                                         await self.ws.send_message("tool_action", {
                                             "tool": "self_heal",
                                             "description": f"Self-healing diagnosis: {step.description}",
-                                            "status": "success" if result.success else "error",
-                                            "result": f"Executed correction: {healed_step.description}" if result.success else f"Correction failed: {result.error}"
+                                            "status": "running",
+                                            "result": None
                                         })
+                                        snap = await self.observer.snapshot()
+                                        screen_text = getattr(snap, "screen_text_summary", "") or ""
+                                        healer = self._get_healer(model)
+                                        healed = await healer.diagnose_and_fix(
+                                            failed_tool=step.tool,
+                                            failed_args=step.args or {},
+                                            description=step.description or step.tool,
+                                            error=err_msg,
+                                            screen_summary=screen_text,
+                                        )
+                                        if healed:
+                                            from planner.schemas import PlanStep as PS
+                                            healed_step = PS(
+                                                tool=healed["tool"],
+                                                args=healed.get("args", {}),
+                                                description=healed.get("description", f"[HEALED] {step.description}"),
+                                            )
+                                            result = await self._execute_step(healed_step, i)
+                                            
+                                            # Broadcast the outcome of the healer diagnosis
+                                            await self.ws.send_message("tool_action", {
+                                                "tool": "self_heal",
+                                                "description": f"Self-healing diagnosis: {step.description}",
+                                                "status": "success" if result.success else "error",
+                                                "result": f"Executed correction: {healed_step.description}" if result.success else f"Correction failed: {result.error}"
+                                            })
 
-                                        # Add the healing event to cumulative steps so it persists in final response / history
-                                        heal_log_step = {
-                                            "tool": "self_heal",
-                                            "description": f"Self-healing: {step.description} -> {healed_step.description}",
-                                            "status": "success" if result.success else "error",
-                                            "error": None if result.success else (result.error or "Healing failed")
-                                        }
-                                        self.cumulative_steps.append(heal_log_step)
+                                            # Add the healing event to cumulative steps so it persists in final response / history
+                                            heal_log_step = {
+                                                "tool": "self_heal",
+                                                "description": f"Self-healing: {step.description} -> {healed_step.description}",
+                                                "status": "success" if result.success else "error",
+                                                "error": None if result.success else (result.error or "Healing failed")
+                                            }
+                                            self.cumulative_steps.append(heal_log_step)
 
-                                        if result.success:
-                                            step_success = True
-                                            if i < len(self.cumulative_steps):
-                                                self.cumulative_steps[i]["description"] = f"[HEALED] {step.description} -> {healed_step.description}"
-                                            completed_actions.append(healed_step.description)
-                                            break
-                                    else:
+                                            if result.success:
+                                                step_success = True
+                                                if i < len(self.cumulative_steps):
+                                                    self.cumulative_steps[i]["description"] = f"[HEALED] {step.description} -> {healed_step.description}"
+                                                completed_actions.append(healed_step.description)
+                                                break
+                                        else:
+                                            await self.ws.send_message("tool_action", {
+                                                "tool": "self_heal",
+                                                "description": f"Self-healing diagnosis: {step.description}",
+                                                "status": "error",
+                                                "result": "No self-healing path identified."
+                                            })
+                                    except Exception as heal_err:
+                                        import structlog
+                                        structlog.get_logger().debug("Healer exception", error=str(heal_err))
                                         await self.ws.send_message("tool_action", {
                                             "tool": "self_heal",
                                             "description": f"Self-healing diagnosis: {step.description}",
                                             "status": "error",
-                                            "result": "No self-healing path identified."
+                                            "result": f"Diagnosis failed: {heal_err}"
                                         })
-                                except Exception as heal_err:
-                                    import structlog
-                                    structlog.get_logger().debug("Healer exception", error=str(heal_err))
-                                    await self.ws.send_message("tool_action", {
-                                        "tool": "self_heal",
-                                        "description": f"Self-healing diagnosis: {step.description}",
-                                        "status": "error",
-                                        "result": f"Diagnosis failed: {heal_err}"
-                                    })
 
-                            if result.retryable and retry_count < max_retries:
-                                retry_count += 1
-                                await self._transition(
-                                    AgentState.RETRYING,
-                                    current_step_description=f"Retrying: {step.description} ({retry_count}/{max_retries})"
-                                )
-                                await self._cancellable_sleep(1.5)
-                                if self._cancel_requested or plan_failed:
+                                if result.retryable and retry_count < max_retries:
+                                    retry_count += 1
+                                    await self._transition(
+                                        AgentState.RETRYING,
+                                        current_step_description=f"Retrying: {step.description} ({retry_count}/{max_retries})"
+                                    )
+                                    await self._cancellable_sleep(1.5)
+                                    if self._cancel_requested or plan_failed:
+                                        break
+                                else:
                                     break
-                            else:
-                                break
 
-                    if self._cancel_requested or plan_failed:
-                        await self.ws.send_message("tool_terminated", {"index": i})
-                        if i < len(self.cumulative_steps):
-                            self.cumulative_steps[i]["status"] = "terminated"
-                        return False
+                        if self._cancel_requested or plan_failed:
+                            await self.ws.send_message("tool_terminated", {"index": i})
+                            if i < len(self.cumulative_steps):
+                                self.cumulative_steps[i]["status"] = "terminated"
+                            return False
 
-                    if step_success:
-                        completed_actions.append(step.description or f"Executed tool: {step.tool}")
-                        if step.wait_after:
-                            await self._transition(AgentState.WAITING)
-                            await asyncio.sleep(step.wait_after)
-                        return True
+                        if step_success:
+                            completed_actions.append(step.description or f"Executed tool: {step.tool}")
+                            if step.wait_after:
+                                await self._transition(AgentState.WAITING)
+                                await asyncio.sleep(step.wait_after)
+                            return True
+                        else:
+                            failed_actions.append(f"{step.description or step.tool} (Reason: {result.error})")
+                            plan_failed = True
+                            return False
+
+                    if is_gui:
+                        async with self._gui_lock:
+                            return await run_step_logic()
                     else:
-                        failed_actions.append(f"{step.description or step.tool} (Reason: {result.error})")
-                        plan_failed = True
-                        return False
+                        return await run_step_logic()
 
                 for group in groups:
                     if plan_failed or self._cancel_requested:
