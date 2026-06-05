@@ -103,19 +103,39 @@ export function useWebSocket(port: number | null) {
       }),
 
       wsClient.on("tool_started", (msg) => {
-        const { index, thread_id } = msg.payload as { index: number; thread_id?: string };
+        const { index, thread_id, tool, description, args } = msg.payload as any;
         setExecutingStep(index, thread_id);
-        updateStepStatus(index, { status: "running", timestamp: Date.now() }, thread_id);
+        updateStepStatus(index, { 
+          status: "running", 
+          timestamp: Date.now(),
+          ...(tool && { tool }),
+          ...(description && { description }),
+          ...(args && { args }),
+        }, thread_id);
       }),
 
       wsClient.on("tool_completed", (msg) => {
-        const { index, result, thread_id } = msg.payload as { index: number; result: unknown; thread_id?: string };
-        updateStepStatus(index, { status: "success", result, timestamp: Date.now() }, thread_id);
+        const { index, result, thread_id, tool, description, args } = msg.payload as any;
+        updateStepStatus(index, { 
+          status: "success", 
+          result, 
+          timestamp: Date.now(),
+          ...(tool && { tool }),
+          ...(description && { description }),
+          ...(args && { args }),
+        }, thread_id);
       }),
 
       wsClient.on("tool_error", (msg) => {
-        const { index, error, thread_id } = msg.payload as { index: number; error: string; thread_id?: string };
-        updateStepStatus(index, { status: "error", error, timestamp: Date.now() }, thread_id);
+        const { index, error, thread_id, tool, description, args } = msg.payload as any;
+        updateStepStatus(index, { 
+          status: "error", 
+          error, 
+          timestamp: Date.now(),
+          ...(tool && { tool }),
+          ...(description && { description }),
+          ...(args && { args }),
+        }, thread_id);
       }),
 
       wsClient.on("tool_terminated", (msg) => {
