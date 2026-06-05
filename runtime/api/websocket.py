@@ -318,19 +318,29 @@ class Session:
                 from planner.agent import build_system_prompt
                 from dev_logger import DevLogger
 
-                # Build system prompt utilizing user's customizations (name, skills, custom instructions)
+                # Retrieve memories for chat context
+                memories_list = []
+                try:
+                    from memory import MemoryManager
+                    memory_manager = MemoryManager(tid)
+                    auto_recalled = await memory_manager.recall(text, top_k=5)
+                    pref_results = await memory_manager.long.search("[PREFERENCE]", top_k=8)
+                    seen = {m.content for m in auto_recalled}
+                    for m in pref_results:
+                        if m.content not in seen:
+                            auto_recalled.append(m)
+                            seen.add(m.content)
+                    memories_list = [m.content for m in auto_recalled]
+                except Exception as e:
+                    logger.warning("Failed to fetch memories for chat routing", error=str(e))
+
+                # Build system prompt utilizing user's customizations (name, skills, custom instructions) and memories
                 sys_prompt = build_system_prompt(
                     skills=self.deps.skills,
                     user_name=self.deps.user_name,
-                    custom_prompt=self.deps.custom_prompt
-                )
-                # Append direct conversation rules to the customized prompt
-                sys_prompt += (
-                    "\n\n━━━ CONVERSATIONAL ASSISTANT RULES ━━━\n"
-                    "Answer the user's conversational questions, explanations, or code requests directly "
-                    "using clean, beautifully formatted GitHub-flavored markdown.\n"
-                    "If the user asks for code, provide complete, well-commented code blocks with syntax highlighting.\n"
-                    "Do not output planning schemas, JSON templates, or internal thoughts unless explicitly requested."
+                    custom_prompt=self.deps.custom_prompt,
+                    chat_only=True,
+                    memories=memories_list
                 )
 
                 # Log conversational run context/prompt

@@ -25,7 +25,14 @@ class AgentDependencies(BaseModel):
 
 
 # ─── Overhauled System Prompt ──────────────────────────────────────────────
-def build_system_prompt(skills: list, user_name: str, custom_prompt: str, chat_only: bool = False) -> str:
+# ─── Overhauled System Prompt ──────────────────────────────────────────────
+def build_system_prompt(
+    skills: list,
+    user_name: str,
+    custom_prompt: str,
+    chat_only: bool = False,
+    memories: list = None
+) -> str:
     has_desktop  = "desktop_automation" in skills and not chat_only
     has_dev      = "developer" in skills and not chat_only
     has_admin    = "system_admin" in skills and not chat_only
@@ -38,31 +45,64 @@ def build_system_prompt(skills: list, user_name: str, custom_prompt: str, chat_o
     name_clause = f"The user's name is {user_name}. Address them by name occasionally when it feels natural." if user_name else ""
     custom_clause = f"\n\nUSER CUSTOM INSTRUCTIONS (follow these precisely):\n{custom_prompt}" if custom_prompt else ""
 
-    # ─── Core Identity ─────────────────────────────────────────────────────
+    if chat_only:
+        # Direct conversational assistant prompt (no desktop automation, no JSON schemas)
+        skill_sections = []
+        if "developer" in skills:
+            skill_sections.append(
+                "DEVELOPER CONTEXT: Prioritize code quality and correctness. Use proper language identifiers in code blocks. "
+                "Explain shell commands before suggesting them. Prefer idiomatic solutions."
+            )
+        if "system_admin" in skills:
+            skill_sections.append(
+                "SYSTEM ADMIN CONTEXT: Use direct, efficient shell commands. "
+                "Always explain what a destructive command does before including it in a plan. "
+                "Prefer non-destructive read operations first to verify state."
+            )
+        if "media" in skills:
+            skill_sections.append(
+                "MEDIA CONTEXT: Help with Spotify, YouTube, VLC, and media players. Match the user's tone."
+            )
+        if "writing" in skills:
+            skill_sections.append(
+                "WRITING CONTEXT: Help with drafting, editing, and improving text. Offer multiple variants when the user wants options."
+            )
+        if "research" in skills:
+            skill_sections.append(
+                "RESEARCH CONTEXT: Provide thorough, accurate analysis. Cite sources when possible. Break down complex topics."
+            )
+
+        context_clause = ""
+        if skill_sections:
+            context_clause = "\n\n━━━ ACTIVE CONTEXT ━━━\n" + "\n".join([f"• {sec}" for sec in skill_sections])
+
+        memories_clause = ""
+        if memories:
+            memories_clause = "\n\n━━━ RELEVANT USER EXPERIENCE & PREFERENCES ━━━\n" + "\n".join([f"• {m}" for m in memories])
+
+        return f"""You are OpenSarthi, a helpful, precise, and reliable AI desktop assistant for Linux.
+{name_clause}{custom_clause}{context_clause}{memories_clause}
+
+━━━ CHAT MODE ━━━
+Respond conversationally using clean, beautifully formatted GitHub-flavored markdown.
+Use headers, lists, code blocks with appropriate language identifiers, or tables where helpful to organize information.
+Keep your answers direct, accurate, and concise. Do not output planning schemas, JSON templates, or tool rules."""
+
+    # Otherwise, it's TASK mode
     base = f"""You are OpenSarthi, a precise and reliable AI desktop assistant for Linux.
 {name_clause}{custom_clause}
 
 ━━━ THINKING PROTOCOL ━━━
 Before every response, think inside <think>...</think> tags.
-In your thinking: classify the request, check the current desktop state, identify which tools are needed, and plan the exact sequence.
-After </think>, output ONLY the final response — no preamble, no "I will now...", no meta-commentary.
+In your thinking: check the current desktop state, identify which tools are needed, and plan the exact sequence.
+After </think>, output ONLY the final JSON plan inside a ```json block. Do not include any preamble, meta-commentary, or conversational text.
 
 ━━━ OUTPUT FORMAT ━━━
-For conversational responses: plain markdown. Use headers, bullets, code blocks as appropriate.
-For desktop tasks: output a single JSON array of steps inside a ```json block.
+Output a single JSON array of steps inside a ```json block.
 NEVER mix prose with a JSON plan in the same response.
 NEVER output incomplete JSON.
-
-━━━ CLASSIFICATION ━━━
-Classify every user input as one of:
-- CHAT → Questions, explanations, content generation, coding help in this chat window. Respond with markdown.
-- TASK → Physical actions on the desktop: open apps, click, type in external windows, run commands, file operations.
-- CLARIFY → Ambiguous request where you need more information before acting.
-
-For CLARIFY: ask one specific, direct question. Do not make assumptions.
 """
 
-    # ─── Desktop Automation (only if skill active) ─────────────────────────
     if has_desktop:
         base += """
 ━━━ DESKTOP TASK RULES ━━━
@@ -133,15 +173,6 @@ TASK COMPLETION:
 • If the task could not be completed, explain exactly which step failed and why.
 """
 
-    else:
-        base += """
-━━━ CHAT MODE ━━━
-Desktop automation is not enabled. Respond conversationally.
-Use markdown for code, tables, and structured content.
-Be concise, accurate, and helpful.
-"""
-
-    # ─── Skill-specific context sections ──────────────────────────────────
     skill_sections = []
     if has_dev:
         skill_sections.append(
